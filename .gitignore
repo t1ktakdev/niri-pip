@@ -1,0 +1,9 @@
+/target/
+/dist/
+Cargo.lock.tmp
+*.log
+*.swp
+*.bak
+.DS_Store
+.idea/
+.vscode/

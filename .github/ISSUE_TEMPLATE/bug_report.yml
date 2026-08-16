@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a reproducible niri-pip problem
+title: "[bug] "
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe expected and actual behavior.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Niri version
+      placeholder: "26.04"
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: niri-pip version
+      placeholder: "0.2.1"
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Doctor output
+      description: Paste `niripip doctor`. Remove anything you do not want to share.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Relevant sanitized metadata
+      description: Window title/app-id/size if needed. Never post cookies, tokens or private browser data.

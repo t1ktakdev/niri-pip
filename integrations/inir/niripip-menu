@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NIRIPIP="${NIRIPIP_BIN:-$HOME/.local/bin/niripip}"
+[[ -x "$NIRIPIP" ]] || NIRIPIP="$(command -v niripip || true)"
+[[ -n "$NIRIPIP" ]] || { echo "niripip not found" >&2; exit 1; }
+
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+LANG_FILE="$CONFIG_HOME/niri-pip/ui-language"
+mkdir -p "$(dirname "$LANG_FILE")"
+
+if [[ -n "${NIRIPIP_LANG:-}" ]]; then
+  UI_LANG="${NIRIPIP_LANG,,}"
+elif [[ -s "$LANG_FILE" ]]; then
+  UI_LANG="$(tr -d '[:space:]' < "$LANG_FILE" | tr '[:upper:]' '[:lower:]')"
+else
+  locale_hint="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
+  case "${locale_hint,,}" in
+    ru*) UI_LANG="ru" ;;
+    *) UI_LANG="en" ;;
+  esac
+fi
+[[ "$UI_LANG" == "ru" ]] || UI_LANG="en"
+
+choose() {
+  local prompt="$1"
+  if command -v fuzzel >/dev/null 2>&1; then
+    fuzzel --dmenu --prompt "$prompt" --width 46 --lines 20
+  elif command -v rofi >/dev/null 2>&1; then
+    rofi -dmenu -p "$prompt"
+  elif command -v gum >/dev/null 2>&1; then
+    gum choose
+  else
+    if [[ "$UI_LANG" == "ru" ]]; then
+      echo "Нужен fuzzel, rofi или gum" >&2
+    else
+      echo "fuzzel, rofi or gum is required" >&2
+    fi
+    exit 1
+  fi
+}
+
+notify_error() {
+  local message="$1"
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send "niri-pip" "$message"
+  else
+    echo "$message" >&2
+  fi
+}
+
+if [[ "$UI_LANG" == "ru" ]]; then
+  PROMPT="PiP > "
+  PLAY="Воспроизвести / Пауза"
+  BACK="Назад 10 сек"
+  FORWARD="Вперёд 10 сек"
+  VOL_DOWN="Громкость -5%"
+  VOL_UP="Громкость +5%"
+  SIZE_UP="Размер +10%"
+  SIZE_DOWN="Размер -10%"
+  EXACT="Точный размер…"
+  PRESET="Пресет размера…"
+  POSITION="Позиция…"
+  NUDGE="Сдвинуть…"
+  OPACITY="Прозрачность…"
+  FOLLOW_ON="Follow: включить"
+  FOLLOW_OFF="Follow: выключить"
+  FOLLOW_MODE="Режим Follow…"
+  LOCK="Заблокировать геометрию"
+  UNLOCK="Разблокировать геометрию"
+  RESET="Сбросить настройки PiP"
+  STATUS="Статус"
+  LANGUAGE="Language / Язык"
+  SIZE_PROMPT="Размер ШxВ > "
+  PRESET_PROMPT="Пресет > "
+  POSITION_PROMPT="Позиция > "
+  NUDGE_PROMPT="Сдвиг > "
+  OPACITY_PROMPT="Прозрачность > "
+  FOLLOW_PROMPT="Режим Follow > "
+  BAD_SIZE="Используй ШИРИНАxВЫСОТА, например 1131x636"
+else
+  PROMPT="PiP > "
+  PLAY="Play / Pause"
+  BACK="Seek -10s"
+  FORWARD="Seek +10s"
+  VOL_DOWN="Volume -5%"
+  VOL_UP="Volume +5%"
+  SIZE_UP="Size +10%"
+  SIZE_DOWN="Size -10%"
+  EXACT="Exact size…"
+  PRESET="Size preset…"
+  POSITION="Position…"
+  NUDGE="Nudge…"
+  OPACITY="Opacity…"
+  FOLLOW_ON="Follow on"
+  FOLLOW_OFF="Follow off"
+  FOLLOW_MODE="Follow mode…"
+  LOCK="Lock geometry"
+  UNLOCK="Unlock geometry"
+  RESET="Reset PiP controls"
+  STATUS="Status"
+  LANGUAGE="Language / Язык"
+  SIZE_PROMPT="Size WxH > "
+  PRESET_PROMPT="Preset > "
+  POSITION_PROMPT="Position > "
+  NUDGE_PROMPT="Nudge > "
+  OPACITY_PROMPT="Opacity > "
+  FOLLOW_PROMPT="Follow mode > "
+  BAD_SIZE="Use WIDTHxHEIGHT, for example 1131x636"
+fi
+
+main_menu() {
+  printf '%s\n' \
+    "$PLAY" \
+    "$BACK" \
+    "$FORWARD" \
+    "$VOL_DOWN" \
+    "$VOL_UP" \
+    "$SIZE_UP" \
+    "$SIZE_DOWN" \
+    "$EXACT" \
+    "$PRESET" \
+    "$POSITION" \
+    "$NUDGE" \
+    "$OPACITY" \
+    "$FOLLOW_ON" \
+    "$FOLLOW_OFF" \
+    "$FOLLOW_MODE" \
+    "$LOCK" \
+    "$UNLOCK" \
+    "$RESET" \
+    "$STATUS" \
+    "$LANGUAGE" | choose "$PROMPT"
+}
+
+choice="$(main_menu || true)"
+[[ -n "$choice" ]] || exit 0
+
+case "$choice" in
+  "$PLAY") "$NIRIPIP" media play-pause ;;
+  "$BACK") "$NIRIPIP" media back 10 ;;
+  "$FORWARD") "$NIRIPIP" media forward 10 ;;
+  "$VOL_DOWN") "$NIRIPIP" media volume-down 5 ;;
+  "$VOL_UP") "$NIRIPIP" media volume-up 5 ;;
+  "$SIZE_UP") "$NIRIPIP" scale 10 ;;
+  "$SIZE_DOWN") "$NIRIPIP" scale -10 ;;
+  "$EXACT")
+    size="$(printf '%s\n' 1131x636 960x540 640x360 480x270 | choose "$SIZE_PROMPT" || true)"
+    if [[ "$size" =~ ^([0-9]+)[xX]([0-9]+)$ ]]; then
+      "$NIRIPIP" size "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    elif [[ -n "$size" ]]; then
+      notify_error "$BAD_SIZE"
+      exit 2
+    fi
+    ;;
+  "$PRESET")
+    preset="$(printf '%s\n' tiny small medium large cinema movie study | choose "$PRESET_PROMPT" || true)"
+    [[ -n "$preset" ]] && "$NIRIPIP" preset "$preset"
+    ;;
+  "$POSITION")
+    position="$(printf '%s\n' top-left top-right bottom-left bottom-right center | choose "$POSITION_PROMPT" || true)"
+    [[ -n "$position" ]] && "$NIRIPIP" position "$position"
+    ;;
+  "$NUDGE")
+    nudge="$(printf '%s\n' 'left 20' 'right 20' 'up 20' 'down 20' 'left 50' 'right 50' 'up 50' 'down 50' | choose "$NUDGE_PROMPT" || true)"
+    case "$nudge" in
+      'left 20') "$NIRIPIP" nudge -20 0 ;;
+      'right 20') "$NIRIPIP" nudge 20 0 ;;
+      'up 20') "$NIRIPIP" nudge 0 -20 ;;
+      'down 20') "$NIRIPIP" nudge 0 20 ;;
+      'left 50') "$NIRIPIP" nudge -50 0 ;;
+      'right 50') "$NIRIPIP" nudge 50 0 ;;
+      'up 50') "$NIRIPIP" nudge 0 -50 ;;
+      'down 50') "$NIRIPIP" nudge 0 50 ;;
+    esac
+    ;;
+  "$OPACITY")
+    opacity="$(printf '%s\n' 100 95 90 80 70 50 auto | choose "$OPACITY_PROMPT" || true)"
+    if [[ -n "$opacity" ]]; then
+      if [[ "$opacity" == "auto" || "$opacity" =~ ^([1-9][0-9]|100)$ ]]; then
+        "$NIRIPIP" opacity "$opacity"
+      else
+        notify_error "Opacity: 10-100 or auto"
+        exit 2
+      fi
+    fi
+    ;;
+  "$FOLLOW_ON") "$NIRIPIP" follow on ;;
+  "$FOLLOW_OFF") "$NIRIPIP" follow off ;;
+  "$FOLLOW_MODE")
+    mode="$(printf '%s\n' follow-workspace follow-focused-output stay-on-output | choose "$FOLLOW_PROMPT" || true)"
+    [[ -n "$mode" ]] && "$NIRIPIP" follow-mode "$mode"
+    ;;
+  "$LOCK") "$NIRIPIP" lock ;;
+  "$UNLOCK") "$NIRIPIP" unlock ;;
+  "$RESET") "$NIRIPIP" reset ;;
+  "$STATUS")
+    status_text="$("$NIRIPIP" status)"
+    if command -v kdialog >/dev/null 2>&1; then
+      kdialog --title "niri-pip" --msgbox "$status_text"
+    elif command -v notify-send >/dev/null 2>&1; then
+      notify-send "niri-pip" "$status_text"
+    else
+      printf '%s\n' "$status_text"
+    fi
+    ;;
+  "$LANGUAGE")
+    lang_choice="$(printf '%s\n' 'English' 'Русский' | choose 'Language / Язык > ' || true)"
+    case "$lang_choice" in
+      English) printf 'en\n' > "$LANG_FILE" ;;
+      Русский) printf 'ru\n' > "$LANG_FILE" ;;
+      *) exit 0 ;;
+    esac
+    chmod 600 "$LANG_FILE"
+    exec "$0"
+    ;;
+esac

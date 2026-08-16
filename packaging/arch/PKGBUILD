@@ -1,0 +1,57 @@
+# Maintainer: niri-pip contributors
+pkgname=niri-pip
+pkgver=0.2.1
+pkgrel=1
+pkgdesc='Sticky Picture-in-Picture and floating-window controller for Niri'
+arch=('x86_64')
+url='https://github.com/t1ktakdev/niri-pip'
+license=('MIT')
+install=niri-pip.install
+depends=('niri' 'systemd' 'bash' 'python')
+optdepends=('playerctl: MPRIS media controls' 'fuzzel: controller menu' 'rofi: controller menu fallback' 'gum: controller menu fallback')
+makedepends=('cargo' 'git')
+source=("git+https://github.com/t1ktakdev/niri-pip.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname"
+  cargo fetch --locked
+}
+
+build() {
+  cd "$pkgname"
+  cargo build --release --workspace --locked
+}
+
+check() {
+  cd "$pkgname"
+  cargo test --workspace --all-targets --locked
+}
+
+package() {
+  cd "$pkgname"
+
+  install -Dm755 target/release/niripip "$pkgdir/usr/bin/niripip"
+  install -Dm755 target/release/niripipd "$pkgdir/usr/bin/niripipd"
+  install -Dm755 integrations/inir/niripip-menu "$pkgdir/usr/bin/niripip-menu"
+  install -Dm755 scripts/setup-niri-integration.sh "$pkgdir/usr/bin/niripip-integrate"
+  install -Dm755 scripts/remove-niri-integration.sh "$pkgdir/usr/bin/niripip-unintegrate"
+
+  install -Dm644 systemd/niripip.service "$pkgdir/usr/lib/systemd/user/niripip.service"
+  sed -i \
+    -e 's#ExecStart=%h/.local/bin/niripipd#ExecStart=/usr/bin/niripipd#' \
+    -e 's#ExecReload=%h/.local/bin/niripip reload#ExecReload=/usr/bin/niripip reload#' \
+    "$pkgdir/usr/lib/systemd/user/niripip.service"
+  ln -s niripip.service "$pkgdir/usr/lib/systemd/user/niripipd.service"
+
+  install -Dm644 packaging/desktop/niri-pip.desktop.in "$pkgdir/usr/share/applications/niri-pip.desktop"
+  sed -i 's#@NIRIPIP@#/usr/bin/niripip#' "$pkgdir/usr/share/applications/niri-pip.desktop"
+
+  install -Dm644 config/config.example.toml "$pkgdir/usr/share/doc/$pkgname/config.example.toml"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 README.ru.md "$pkgdir/usr/share/doc/$pkgname/README.ru.md"
+  install -Dm644 VERIFICATION.md "$pkgdir/usr/share/doc/$pkgname/VERIFICATION.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  cp -r docs "$pkgdir/usr/share/doc/$pkgname/"
+  cp -r integrations "$pkgdir/usr/share/doc/$pkgname/"
+}

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Niri upstream issues
+    url: https://github.com/niri-wm/niri/issues
+    about: Use this for behavior that reproduces without niri-pip.

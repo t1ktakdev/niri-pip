@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.kdl text eol=lf
+*.md text eol=lf

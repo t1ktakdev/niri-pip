@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a focused improvement
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Upstream constraints
+      description: If this needs a new Niri behavior/API, link the relevant upstream documentation or source.

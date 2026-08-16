@@ -1,0 +1,23 @@
+[Unit]
+Description=Niri Picture-in-Picture and sticky-window daemon
+Documentation=https://github.com/t1ktakdev/niri-pip
+PartOf=graphical-session.target niri.service
+After=graphical-session.target niri.service
+Requisite=graphical-session.target
+ConditionEnvironment=NIRI_SOCKET
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/niripipd
+ExecReload=%h/.local/bin/niripip reload
+Restart=always
+RestartSec=1s
+TimeoutStopSec=5s
+KillMode=control-group
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target
+Alias=niripipd.service

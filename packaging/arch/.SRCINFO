@@ -1,0 +1,22 @@
+pkgbase = niri-pip
+	pkgdesc = Sticky Picture-in-Picture and floating-window controller for Niri
+	pkgver = 0.2.1
+	pkgrel = 1
+	url = https://github.com/t1ktakdev/niri-pip
+	arch = x86_64
+	license = MIT
+	install = niri-pip.install
+	makedepends = cargo
+	makedepends = git
+	depends = niri
+	depends = systemd
+	depends = bash
+	depends = python
+	optdepends = playerctl: MPRIS media controls
+	optdepends = fuzzel: controller menu
+	optdepends = rofi: controller menu fallback
+	optdepends = gum: controller menu fallback
+	source = git+https://github.com/t1ktakdev/niri-pip.git#tag=v0.2.1
+	sha256sums = SKIP
+
+pkgname = niri-pip

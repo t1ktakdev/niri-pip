@@ -1,0 +1,5 @@
+[toolchain]
+# Stable toolchain current at the v0.2.1 controller baseline (2026-08-16).
+channel = "1.97.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

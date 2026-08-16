@@ -1,0 +1,112 @@
+# niri-pip v0.2 configuration
+# Copy to ~/.config/niri-pip/config.toml.
+
+[general]
+enabled = true
+auto_detect = true
+follow_workspace = true
+# follow-workspace | follow-focused-output | stay-on-output
+# Multi-monitor modes other than follow-workspace are advanced modes; validate on your multi-monitor setup.
+follow_mode = "follow-workspace"
+remember_geometry = true
+detection_threshold = 100
+restore_layout_on_unpin = true
+action_suppression_ms = 650
+workspace_debounce_ms = 75
+# Restore pre-PiP focus only when a newly mapped PiP stole it within this window.
+focus_restore_window_ms = 500
+
+[pip]
+# top-left | top-right | bottom-left | bottom-right | center
+position = "bottom-right"
+# remember learns external/manual geometry changes; fixed keeps configured placement.
+position_mode = "remember"
+# Used when profile = "custom". Built-ins: tiny=320x180, small=384x216, medium=480x270, large=640x360, cinema=960x540.
+profile = "medium"
+width = 480
+height = 270
+gap = 18
+# niri-pip intentionally rejects true: management should not steal keyboard focus.
+steal_focus = false
+# Keep the observed PiP aspect ratio while targeting roughly the profile area.
+preserve_aspect_ratio = true
+
+# Safe insets used by the position approximation. Niri's move action is relative to its
+# working area, but the calculated working-area rectangle is not exposed by Niri IPC.
+# iNiR layer-shell exclusive zones are normally already part of Niri's working area; keep
+# these values small unless your bar/dock overlaps floating windows.
+[margins]
+top = 18
+right = 18
+bottom = 18
+left = 18
+
+# These switches gate the matching built-in browser-specific detectors. The generic PiP
+# title detector remains active; remove/override it if you want title-only matching disabled.
+[browsers]
+chromium = true
+firefox = true
+brave = true
+vivaldi = true
+edge = true
+
+# Highest eligible detector score above general.detection_threshold wins.
+# Regex/size/floating fields are required constraints when specified. Bonus fields add
+# score after all constraints match.
+
+# Chromium/xwayland-satellite case observed in the target environment:
+# title="Picture in picture", app-id="".
+[[detectors]]
+name = "chromium-empty-app-id"
+action = "pip"
+title_regex = "(?i)^picture(?:[ -]?in[ -]?)picture$"
+app_id_regex = "^$"
+score = 155
+compact_bonus = 10
+aspect_16_9_bonus = 10
+empty_app_id_bonus = 20
+new_window_bonus = 5
+
+# Niri's own documentation uses firefox + Picture-in-Picture as its PiP rule example.
+[[detectors]]
+name = "firefox-pip"
+action = "pip"
+title_regex = "(?i)^picture-in-picture$"
+app_id_regex = "(?i)^(firefox|org\\.mozilla\\.firefox)$"
+score = 150
+compact_bonus = 10
+aspect_16_9_bonus = 10
+new_window_bonus = 5
+
+[[detectors]]
+name = "chromium-family-pip"
+action = "pip"
+title_regex = "(?i)^picture(?:[ -]?in[ -]?)picture$"
+app_id_regex = "(?i)(chrome|chromium|brave|vivaldi|edge)"
+score = 145
+compact_bonus = 10
+aspect_16_9_bonus = 10
+new_window_bonus = 5
+
+# Conservative fallback for PiP windows whose browser identity is unavailable through IPC.
+[[detectors]]
+name = "generic-pip-title"
+action = "pip"
+title_regex = "(?i)^picture(?:[ -]?in[ -]?)picture$"
+max_width = 1280
+max_height = 900
+score = 105
+compact_bonus = 5
+aspect_16_9_bonus = 5
+
+# Example custom detector:
+# [[detectors]]
+# name = "my-localized-pip"
+# action = "pip"
+# title_regex = "(?i)^картинка в картинке$"
+# max_width = 1280
+# max_height = 900
+# score = 130
+
+[logging]
+level = "info"

@@ -1,0 +1,9 @@
+binds {
+    Mod+Alt+P { spawn "niripip" "menu"; }
+    Mod+Alt+Equal { spawn "niripip" "scale" "10"; }
+    Mod+Alt+Minus { spawn "niripip" "scale" "-10"; }
+    Mod+Alt+O { spawn "niripip" "opacity" "100"; }
+    Mod+Alt+Shift+O { spawn "niripip" "opacity" "auto"; }
+    Mod+Alt+L { spawn "niripip" "lock"; }
+    Mod+Alt+Shift+L { spawn "niripip" "unlock"; }
+}

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=niri-pip Controller
+Name[ru]=Контроллер niri-pip
+Comment=Control Niri Picture-in-Picture windows
+Comment[ru]=Управление Picture-in-Picture окнами в Niri
+Exec="@NIRIPIP@" menu
+Icon=video-display
+Terminal=false
+Categories=AudioVideo;Utility;
+Keywords=PiP;Picture-in-Picture;Niri;Wayland;
+Keywords[ru]=PiP;Картинка в картинке;Niri;Wayland;
+StartupNotify=false
