@@ -136,8 +136,7 @@ cargo generate-lockfile
 [[ -f Cargo.lock ]] || fail "Cargo.lock was not generated"
 ok "Cargo.lock generated"
 
-# The assistant sandbox has no Rust toolchain. Make the real machine the formatting source of truth,
-# then enforce the exact gate used by CI.
+# Format on the target machine, then enforce the exact gate used by CI.
 info "rustfmt"
 cargo fmt --all
 cargo fmt --all --check
