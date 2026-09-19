@@ -8,7 +8,7 @@
 
 Smart Picture-in-Picture, sticky windows and compact overlays for the Niri Wayland compositor.
 
-`niri-pip` watches Niri's event stream, detects browser PiP windows, keeps them floating, follows the active workspace without stealing focus, remembers free-form geometry, provides a scratchpad-style minimize/restore flow for normal windows, and exposes a small controller for size, position, opacity, follow mode, locking and media keys.
+`niri-pip` watches Niri's event stream, detects browser PiP windows, keeps them floating, follows the active workspace without stealing focus, remembers free-form geometry, provides a guarded Hide/restore flow for normal windows, and exposes a small controller for size, position, opacity, follow mode, locking and media keys.
 
 ## Highlights
 
@@ -25,7 +25,7 @@ Smart Picture-in-Picture, sticky windows and compact overlays for the Niri Wayla
 - Temporary `peek` mode that enlarges a tracked window and restores its exact base geometry.
 - Origin-aware restore: manual windows return to their original workspace and floating/tiling mode; original floating geometry is restored when available.
 - Named overlay profiles for repeatable call, study, monitoring and other layouts.
-- Scratchpad-style `minimize` / `restore-minimized` / `restore-all` for ordinary windows, with workspace/layout restoration and persistent minimized state across daemon restarts.
+- `hide` / `restore-hidden` / `restore-all-hidden` for ordinary windows: the app keeps running while the window is parked on a guarded service workspace, with workspace/layout restoration across daemon restarts.
 - Optional MPRIS controls through `playerctl`.
 - Compact controller using fuzzel, with rofi/gum fallbacks.
 - Human-sized Settings UI with Automatic/Russian/English language selection and autosave.
@@ -34,7 +34,7 @@ Smart Picture-in-Picture, sticky windows and compact overlays for the Niri Wayla
 
 ## Verified environment
 
-v0.3.0 passed the full release preflight on Arch Linux with Niri 26.04 and Rust 1.97.1, including clippy with warnings denied, the complete test suite, release build, installer/doctor validation and live Settings UI browser acceptance. The final real-machine smoke had no auto-PiP window open, so that one destructive live branch was intentionally skipped; the exact matrix is documented below.
+v0.3.1 passed the full release preflight on Arch Linux with Niri 26.04 and Rust 1.97.1: 77 workspace tests, clippy with warnings denied, locked release build, real installer/rollback validation, `niri validate`, `doctor`, live Hide/guard/restore acceptance and live Settings per-window restore. The exact matrix is documented below.
 
 See [VERIFICATION.md](VERIFICATION.md) for the exact verification matrix.
 
@@ -117,7 +117,7 @@ The UI provides:
 - original-state restore after unpin;
 - focus-stealing prevention and aspect-ratio policy;
 - default PiP opacity;
-- scratchpad minimize enable/focus policy, minimized-window count and restore actions;
+- Hide enable/focus policy, hidden-window list/count and per-window/latest/all restore actions;
 - daemon, Niri IPC, iNiR and desktop-entry diagnostics;
 - safe copyable Niri keybind suggestions.
 
@@ -127,8 +127,8 @@ Suggested Niri shortcut:
 
 ```kdl
 binds {
-    Mod+M { spawn "niripip" "minimize"; }
-    Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+    Mod+Alt+M repeat=false { spawn "niripip" "hide"; }
+    Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }
     Mod+Alt+P { spawn "niripip" "ui"; }
 }
 ```
@@ -144,11 +144,11 @@ niripip status
 niripip list
 niripip doctor
 
-niripip minimize
-niripip restore-minimized
-niripip restore-minimized --window-id 123
-niripip restore-all
-niripip minimized
+niripip hide
+niripip restore-hidden
+niripip restore-hidden --window-id 123
+niripip restore-all-hidden
+niripip hidden
 
 niripip size 1131 636
 niripip scale 10
@@ -201,13 +201,13 @@ niripip toggle
 
 Manual PiP resize remains authoritative. Presets are shortcuts, not restrictions.
 
-### Minimize / scratchpad
+### Hide / hidden windows
 
-`niripip minimize` moves the focused ordinary window to a dynamically named scratchpad workspace without following focus. `niripip restore-minimized` restores the most recently minimized window; `--window-id` selects a specific one and `restore-all` returns the whole stack. The daemon persists minimized-window metadata, so the stack survives a daemon restart inside the same Niri session. The stack is session-scoped and stale live IDs are discarded after a Niri restart or reboot.
+`niripip hide` moves the focused ordinary window to a dynamically named guarded service workspace with `focus=false`. The application stays running, but the window leaves normal workspace use until `restore-hidden`, `restore-all-hidden`, or a Settings restore button returns it. If the service workspace is focused accidentally, niri-pip immediately returns to the previous normal workspace.
 
-This is intentionally separate from application-native Wayland minimize. Niri 26.04 does not implement a traditional minimize/taskbar model and affected clients can freeze visually after sending the native minimize request. `niri-pip` cannot intercept that request before Niri; the scratchpad commands provide a predictable compositor-side alternative instead.
+This is deliberately described as **Hide**, not native minimize. Niri 26.04 does not expose a hidden/minimized-window IPC action, and niri-pip cannot intercept a client's Wayland `set_minimized` request before Niri receives it. The v0.3.0 names `minimize`, `restore-minimized`, `restore-all` and `minimized` remain compatibility aliases.
 
-For floating windows, Niri's own per-workspace floating layout memory is used because it restores position and size exactly. For tiled windows, niri-pip reapplies the captured dimensions because Niri can lose tiled height during a workspace round-trip. The scratchpad name is removed again when the last managed minimized window is restored or closed.
+Hidden-window metadata survives a daemon restart inside the same Niri session. The stack is session-scoped, so stale live IDs are discarded after a Niri restart or reboot. Floating layout is left to Niri's exact per-workspace memory; tiled dimensions are replayed explicitly. The service workspace name is removed when the last managed hidden window is restored or closed.
 
 ### Sticky windows, overlays and peek
 
@@ -352,7 +352,7 @@ The uninstaller removes only niri-pip's marker-scoped Niri integration and keeps
 - Niri IPC does not expose a standalone calculated working-area rectangle, so corner positioning uses Niri work-area-relative moves plus configurable safety margins.
 - Niri IPC does not expose a reliable XWayland/native flag for every window.
 - `follow-focused-output` and `stay-on-output` are available, but complex multi-monitor layouts deserve testing on the target setup.
-- Application-native minimize is a Niri/client interaction and cannot be intercepted by niri-pip; use the scratchpad minimize commands/keybinds for predictable behavior on affected Niri versions.
+- Application-native minimize is a Niri/client interaction and cannot be intercepted by niri-pip; `hide` is a guarded service-workspace emulation, not native minimize.
 - MPRIS support depends on the browser/site/player, not only on niri-pip.
 
 ## Development

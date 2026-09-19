@@ -115,12 +115,47 @@ grep -q 'Exec="@NIRIPIP@" ui' packaging/desktop/niri-pip.desktop.in \
 ok "settings UI packaging"
 
 grep -q '^\[minimize\]$' config/config.example.toml     || fail "example config is missing [minimize]"
-grep -q 'Mod+M { spawn "niripip" "minimize"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing Mod+M minimize"
-grep -q 'Mod+Shift+M { spawn "niripip" "restore-minimized"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing restore-minimized"
+grep -q 'Mod+Alt+M repeat=false { spawn "niripip" "hide"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing Mod+Alt+M hide"
+grep -q 'Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing restore-hidden"
+grep -q 'niri-pip hide shortcuts' scripts/setup-niri-integration.sh     || fail "integration installer is missing guarded Hide shortcut markers"
 grep -q 'pub const DAEMON_PROTOCOL_VERSION: u32 = 4;' crates/niripip-core/src/protocol.rs     || fail "daemon protocol is not v4"
 grep -q 'pub const STATE_SCHEMA_VERSION: u32 = 3;' crates/niripip-core/src/state.rs     || fail "persistent state schema is not v3"
 grep -q 'expected state schema 3' scripts/real-machine-smoke.sh     || fail "real-machine smoke is not checking schema 3"
-ok "minimize/protocol/state integration"
+ok "hide/protocol/state integration"
+
+tmp_hide="$(mktemp -d)"
+mkdir -p "$tmp_hide/config/niri/config.d" "$tmp_hide/home"
+cat > "$tmp_hide/config/niri/config.kdl" <<'EOF'
+include "config.d/70-binds.kdl"
+include "config.d/90-user-extra.kdl"
+EOF
+cat > "$tmp_hide/config/niri/config.d/70-binds.kdl" <<'EOF'
+binds {
+    Mod+Shift+M { spawn "true"; }
+}
+EOF
+cat > "$tmp_hide/config/niri/config.d/90-user-extra.kdl" <<'EOF'
+binds {
+    Super+M { maximize-window-to-edges; }
+}
+EOF
+
+env -u NIRI_SOCKET XDG_CONFIG_HOME="$tmp_hide/config" HOME="$tmp_hide/home"     ./scripts/setup-niri-integration.sh >/dev/null 2>&1
+hide_target="$tmp_hide/config/niri/config.d/90-user-extra.kdl"
+[[ "$(grep -c '^binds {' "$hide_target")" -eq 1 ]]     || fail "Hide integration created a duplicate binds block"
+[[ "$(grep -c 'Mod+Alt+M repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration did not add Mod+Alt+M exactly once"
+[[ "$(grep -c 'Mod+Alt+Shift+M repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration did not add restore shortcut exactly once"
+grep -q 'Super+M { maximize-window-to-edges; }' "$hide_target"     || fail "Hide integration damaged an existing user binding"
+
+env -u NIRI_SOCKET XDG_CONFIG_HOME="$tmp_hide/config" HOME="$tmp_hide/home"     ./scripts/setup-niri-integration.sh >/dev/null 2>&1
+[[ "$(grep -c 'niri-pip hide shortcuts >>>' "$hide_target")" -eq 1 ]]     || fail "Hide integration is not idempotent"
+[[ "$(grep -c 'Mod+Alt+M repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration duplicated Mod+Alt+M"
+
+env -u NIRI_SOCKET XDG_CONFIG_HOME="$tmp_hide/config" HOME="$tmp_hide/home"     ./scripts/remove-niri-integration.sh >/dev/null 2>&1
+! grep -q 'niri-pip hide shortcuts' "$hide_target"     || fail "Hide integration markers survived removal"
+grep -q 'Super+M { maximize-window-to-edges; }' "$hide_target"     || fail "Hide integration removal damaged an existing user binding"
+rm -rf "$tmp_hide"
+ok "Hide shortcut installer regression"
 
 if command -v systemd-analyze >/dev/null 2>&1; then
     tmp="$(mktemp -d)"

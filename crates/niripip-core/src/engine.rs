@@ -149,6 +149,7 @@ pub struct Engine {
     focused_window: Option<u64>,
     previous_focused_window: Option<u64>,
     focused_workspace: Option<u64>,
+    previous_focused_workspace: Option<u64>,
     niri_connected: bool,
     niri_version: Option<String>,
     enabled: bool,
@@ -173,6 +174,7 @@ impl Engine {
             focused_window: None,
             previous_focused_window: None,
             focused_workspace: None,
+            previous_focused_workspace: None,
             niri_connected: false,
             niri_version: None,
             persistent,
@@ -233,17 +235,30 @@ impl Engine {
                 self.reconcile_managed_placement()
             }
             CompositorEvent::WorkspacesChanged(workspaces) => {
+                let previous_focus = self.focused_workspace;
                 self.workspaces = workspaces.into_iter().map(|w| (w.id, w)).collect();
-                self.focused_workspace = self
+                let focused = self
                     .workspaces
                     .values()
                     .find(|w| w.is_focused)
                     .map(|w| w.id);
+                if focused != previous_focus {
+                    if let Some(previous) = previous_focus.filter(|id| {
+                        self.workspaces.contains_key(id) && !self.is_scratchpad_workspace(*id)
+                    }) {
+                        self.previous_focused_workspace = Some(previous);
+                    }
+                }
+                self.focused_workspace = focused;
+                if let Some(guard) = self.hidden_workspace_guard_effect() {
+                    return vec![guard];
+                }
                 let mut effects = self.reconcile_workspace_follow();
                 effects.extend(self.reconcile_managed_placement());
                 effects
             }
             CompositorEvent::WorkspaceActivated { id, focused } => {
+                let previous_focus = self.focused_workspace;
                 if let Some(target) = self.workspaces.get(&id).cloned() {
                     let output = target.output;
                     for ws in self.workspaces.values_mut() {
@@ -256,7 +271,18 @@ impl Engine {
                     }
                 }
                 if focused {
+                    if previous_focus != Some(id) {
+                        if let Some(previous) = previous_focus.filter(|workspace_id| {
+                            self.workspaces.contains_key(workspace_id)
+                                && !self.is_scratchpad_workspace(*workspace_id)
+                        }) {
+                            self.previous_focused_workspace = Some(previous);
+                        }
+                    }
                     self.focused_workspace = Some(id);
+                    if let Some(guard) = self.hidden_workspace_guard_effect() {
+                        return vec![guard];
+                    }
                 }
                 Vec::new()
             }
@@ -1100,6 +1126,59 @@ impl Engine {
         self.workspaces.values().find(|workspace| {
             workspace.name.as_deref() == Some(self.config.minimize.scratchpad_name.as_str())
         })
+    }
+
+    fn is_scratchpad_workspace(&self, workspace_id: u64) -> bool {
+        self.workspaces.get(&workspace_id).is_some_and(|workspace| {
+            workspace.name.as_deref() == Some(self.config.minimize.scratchpad_name.as_str())
+        })
+    }
+
+    fn hidden_guard_target(&self) -> Option<u64> {
+        self.previous_focused_workspace
+            .filter(|id| self.workspaces.contains_key(id) && !self.is_scratchpad_workspace(*id))
+            .or_else(|| {
+                self.persistent
+                    .minimized
+                    .iter()
+                    .rev()
+                    .filter_map(|entry| entry.origin_workspace_id)
+                    .find(|id| {
+                        self.workspaces.contains_key(id) && !self.is_scratchpad_workspace(*id)
+                    })
+            })
+            .or_else(|| {
+                let scratch_output = self
+                    .scratchpad_workspace()
+                    .and_then(|workspace| workspace.output.as_deref());
+                self.workspaces
+                    .values()
+                    .find(|workspace| {
+                        !self.is_scratchpad_workspace(workspace.id)
+                            && workspace.output.as_deref() == scratch_output
+                    })
+                    .map(|workspace| workspace.id)
+            })
+            .or_else(|| {
+                self.workspaces
+                    .values()
+                    .find(|workspace| !self.is_scratchpad_workspace(workspace.id))
+                    .map(|workspace| workspace.id)
+            })
+    }
+
+    fn hidden_workspace_guard_effect(&self) -> Option<Effect> {
+        if self.persistent.minimized.is_empty() {
+            return None;
+        }
+        let current = self.focused_workspace?;
+        if !self.is_scratchpad_workspace(current) {
+            return None;
+        }
+        let target = self.hidden_guard_target()?;
+        Some(Effect::Action(CompositorAction::FocusWorkspace {
+            workspace_id: target,
+        }))
     }
 
     fn scratchpad_has_foreign_windows(&self, workspace_id: u64, excluding: Option<u64>) -> bool {
@@ -2463,6 +2542,29 @@ mod tests {
         assert_eq!(engine.minimized_snapshots().len(), 1);
         engine.commit_restore(&restore);
         assert!(engine.minimized_snapshots().is_empty());
+    }
+
+    #[test]
+    fn hidden_workspace_focus_is_guarded_back_to_previous_workspace() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            50, 1, false,
+        )));
+        let application = engine.minimize(Some(50)).unwrap();
+        engine.commit_minimize(&application);
+        engine.handle_event(CompositorEvent::WorkspacesChanged(scratchpad_workspaces()));
+
+        let effects = engine.handle_event(CompositorEvent::WorkspaceActivated {
+            id: 2,
+            focused: true,
+        });
+
+        assert_eq!(
+            effects,
+            vec![Effect::Action(CompositorAction::FocusWorkspace {
+                workspace_id: 1,
+            })]
+        );
     }
 
     #[test]

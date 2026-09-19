@@ -137,6 +137,9 @@ pub enum CompositorAction {
     FocusWindow {
         id: u64,
     },
+    FocusWorkspace {
+        workspace_id: u64,
+    },
     MoveWindowToFloating {
         id: u64,
     },

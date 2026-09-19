@@ -1,6 +1,6 @@
 # Maintainer: niri-pip contributors
 pkgname=niri-pip
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Picture-in-Picture companion, sticky windows and settings UI for Niri'
 arch=('x86_64')

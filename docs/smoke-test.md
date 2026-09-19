@@ -73,17 +73,18 @@ niripip position bottom-right
 niripip nudge -20 -20
 ```
 
-Verify scratchpad minimize on an ordinary disposable test window:
+Verify Hide on an ordinary disposable test window:
 
 ```sh
-niripip minimize
-niripip minimized
-niripip restore-minimized
+niripip hide
+niripip hidden
+niripip restore-hidden
 ```
 
-For a two-window test, minimize both and verify `niripip restore-all` returns both windows and the
+For a two-window test, hide both and verify `niripip restore-all-hidden` returns both windows and the
 temporary `niri-pip:scratchpad` workspace name disappears afterward. Restart `niripip.service`
-while at least one window is minimized and verify the stack is still reported.
+while at least one window is hidden and verify the stack is still reported. Also try focusing the
+service workspace and verify the daemon immediately returns to the previous normal workspace.
 
 Verify the menu:
 

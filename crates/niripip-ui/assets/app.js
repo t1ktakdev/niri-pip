@@ -27,16 +27,16 @@ const TEXT = {
     focusTitle:"Не красть фокус", focusDesc:"PiP появляется, не перебивая текущее окно",
     aspectTitle:"Сохранять пропорции", aspectDesc:"Сохранять соотношение сторон при автоматическом размере",
     behaviorNote:"Настройки применяются сразу после автосохранения.",
-    minimizeSectionTitle:"Минимизация",
-    minimizeSectionDesc:"Убирает обычные окна в отдельный scratchpad и возвращает их в исходное состояние.",
-    minimizeEnabledTitle:"niri-pip Minimize",
-    minimizeEnabledDesc:"Работает независимо от родной кнопки сворачивания приложений",
-    minimizeFocusTitle:"Фокусировать окно после восстановления",
-    minimizeFocusDesc:"После restore перейти к возвращённому окну",
-    minimizedNowTitle:"Свернуто сейчас",
-    minimizedNone:"Нет свернутых окон",
-    minimizedOne:"Свернуто: {title}",
-    minimizedMany:"Свернуто окон: {count}. Последнее: {title}",
+    minimizeSectionTitle:"Скрытые окна",
+    minimizeSectionDesc:"Hide убирает окно из обычной работы, но приложение продолжает работать в фоне.",
+    minimizeEnabledTitle:"Скрытие окон",
+    minimizeEnabledDesc:"Переносит окно в защищённый служебный workspace до возврата",
+    minimizeFocusTitle:"Фокусировать окно после возврата",
+    minimizeFocusDesc:"После Restore перейти к возвращённому окну",
+    minimizedNowTitle:"Скрыто сейчас",
+    minimizedNone:"Нет скрытых окон",
+    minimizedOne:"Скрыто: {title}",
+    minimizedMany:"Скрыто окон: {count}. Последнее: {title}",
     restoreLast:"Вернуть последнее",
     restoreAll:"Вернуть все",
     restoredLast:"Окно восстановлено",
@@ -44,14 +44,14 @@ const TEXT = {
     compatTitle:"Совместимость Niri",
     compatAffected:"есть проблема",
     compatUnknown:"отдельный режим",
-    compatAffectedText:"В Niri 26.04 родная кнопка «свернуть» может подвешивать GTK/Qt/Electron-приложения. Используйте Mod+M и Mod+Shift+M через niri-pip.",
-    compatOtherText:"niri-pip Minimize работает отдельно от родного Wayland minimize и не зависит от taskbar/dock.",
+    compatAffectedText:"В Niri 26.04 родная кнопка «свернуть» может подвешивать приложения. Используйте Hide: Mod+Alt+M, вернуть: Mod+Alt+Shift+M.",
+    compatOtherText:"Hide — безопасная эмуляция: окно уходит с обычного workspace, приложение остаётся запущенным. Это не native Wayland minimize.",
     integrationTitle:"Интеграция", integrationSubtitle:"Состояние daemon, Niri IPC и пользовательской установки.",
     autostartStatusTitle:"Автозапуск", autostartStatusDesc:"systemd --user",
     inirDesc:"Runtime KDL include", desktopEntryTitle:"Меню приложений",
     restartDaemon:"Перезапустить daemon", configPathLabel:"Конфигурация",
-    shortcutsTitle:"Горячие клавиши", shortcutsSubtitle:"Рекомендуемые bind'ы для Niri. Мы не переписываем ваш config автоматически.",
-    shortcutsNote:"Скопируйте нужную строку в свой блок binds. Это безопаснее, чем автоматически менять пользовательский Niri config.",
+    shortcutsTitle:"Горячие клавиши", shortcutsSubtitle:"Проверяем активный Niri config и показываем, свободна ли комбинация.",
+    shortcutsNote:"Hotkeys Hide используют Mod+Alt+M и Mod+Alt+Shift+M, чтобы не конфликтовать с обычным maximize/mute.",
     aboutTitle:"О программе", aboutSubtitle:"Небольшой companion для Picture-in-Picture в Niri.",
     aboutCopy:"Автоматический PiP, sticky-окна и аккуратное восстановление состояния для Niri.",
     documentation:"Документация ↗", reportIssue:"Сообщить о проблеме ↗",
@@ -60,7 +60,7 @@ const TEXT = {
     saving:"Сохранение…", saved:"Сохранено", saveError:"Не удалось сохранить",
     copied:"Скопировано", copy:"Копировать", geometryReset:"Сохранённая геометрия сброшена",
     daemonRestarted:"Daemon перезапущен", configOpened:"config.toml открыт",
-    settingsShortcut:"Открыть настройки", minimizeShortcut:"Свернуть окно", restoreMinimizedShortcut:"Вернуть последнее", toggleShortcut:"Toggle PiP", peekShortcut:"Peek", restoreShortcut:"Восстановить",
+    settingsShortcut:"Открыть настройки", hideShortcut:"Скрыть окно", restoreHiddenShortcut:"Вернуть скрытое", toggleShortcut:"Toggle PiP", peekShortcut:"Peek", restoreShortcut:"Восстановить", shortcutInstalled:"установлено", shortcutFree:"свободно", shortcutConflict:"конфликт", restoreThis:"Вернуть",
     automaticRussian:"Автоматически (Русский)", automaticEnglish:"Автоматически (English)"
   },
   en: {
@@ -86,16 +86,16 @@ const TEXT = {
     focusTitle:"Never steal focus", focusDesc:"Show PiP without interrupting the current window",
     aspectTitle:"Preserve aspect ratio", aspectDesc:"Preserve video proportions during automatic sizing",
     behaviorNote:"Settings apply immediately after autosave.",
-    minimizeSectionTitle:"Minimize",
-    minimizeSectionDesc:"Parks regular windows on a dedicated scratchpad and restores their original state.",
-    minimizeEnabledTitle:"niri-pip Minimize",
-    minimizeEnabledDesc:"Works independently of application-native minimize buttons",
-    minimizeFocusTitle:"Focus restored window",
-    minimizeFocusDesc:"Switch focus to a window after restoring it",
-    minimizedNowTitle:"Minimized now",
-    minimizedNone:"No minimized windows",
-    minimizedOne:"Minimized: {title}",
-    minimizedMany:"Minimized: {count}. Latest: {title}",
+    minimizeSectionTitle:"Hidden windows",
+    minimizeSectionDesc:"Hide removes a window from normal workspace use while the application keeps running.",
+    minimizeEnabledTitle:"Hide windows",
+    minimizeEnabledDesc:"Parks the window on a guarded service workspace until restored",
+    minimizeFocusTitle:"Focus returned window",
+    minimizeFocusDesc:"Focus a window after Restore",
+    minimizedNowTitle:"Hidden now",
+    minimizedNone:"No hidden windows",
+    minimizedOne:"Hidden: {title}",
+    minimizedMany:"Hidden: {count}. Latest: {title}",
     restoreLast:"Restore latest",
     restoreAll:"Restore all",
     restoredLast:"Window restored",
@@ -103,14 +103,14 @@ const TEXT = {
     compatTitle:"Niri compatibility",
     compatAffected:"affected",
     compatUnknown:"separate mode",
-    compatAffectedText:"On Niri 26.04, application-native minimize can freeze some GTK/Qt/Electron clients. Use Mod+M and Mod+Shift+M through niri-pip.",
-    compatOtherText:"niri-pip Minimize is separate from native Wayland minimize and does not depend on a taskbar or dock.",
+    compatAffectedText:"On Niri 26.04, application-native minimize can freeze some clients. Use Hide: Mod+Alt+M, restore: Mod+Alt+Shift+M.",
+    compatOtherText:"Hide is a safe emulation: the window leaves normal workspace use while the app stays running. It is not native Wayland minimize.",
     integrationTitle:"Integration", integrationSubtitle:"Daemon, Niri IPC and user installation status.",
     autostartStatusTitle:"Autostart", autostartStatusDesc:"systemd --user",
     inirDesc:"Runtime KDL include", desktopEntryTitle:"Application menu",
     restartDaemon:"Restart daemon", configPathLabel:"Configuration",
-    shortcutsTitle:"Shortcuts", shortcutsSubtitle:"Suggested Niri bindings. Your config is never rewritten automatically.",
-    shortcutsNote:"Copy the bindings you want into your existing binds block. This is safer than editing a user's Niri config automatically.",
+    shortcutsTitle:"Shortcuts", shortcutsSubtitle:"Active Niri config is checked so you can see whether a shortcut is free.",
+    shortcutsNote:"Hide uses Mod+Alt+M and Mod+Alt+Shift+M to avoid common maximize and mute bindings.",
     aboutTitle:"About", aboutSubtitle:"A small Picture-in-Picture companion for Niri.",
     aboutCopy:"Automatic PiP, sticky windows and careful state restoration for Niri.",
     documentation:"Documentation ↗", reportIssue:"Report an issue ↗",
@@ -119,7 +119,7 @@ const TEXT = {
     saving:"Saving…", saved:"Saved", saveError:"Could not save",
     copied:"Copied", copy:"Copy", geometryReset:"Remembered geometry reset",
     daemonRestarted:"Daemon restarted", configOpened:"config.toml opened",
-    settingsShortcut:"Open settings", minimizeShortcut:"Minimize window", restoreMinimizedShortcut:"Restore latest", toggleShortcut:"Toggle PiP", peekShortcut:"Peek", restoreShortcut:"Restore",
+    settingsShortcut:"Open settings", hideShortcut:"Hide window", restoreHiddenShortcut:"Restore hidden", toggleShortcut:"Toggle PiP", peekShortcut:"Peek", restoreShortcut:"Restore", shortcutInstalled:"installed", shortcutFree:"free", shortcutConflict:"conflict", restoreThis:"Restore",
     automaticRussian:"Automatic (Russian)", automaticEnglish:"Automatic (English)"
   }
 };
@@ -298,6 +298,32 @@ function renderMinimize() {
       .replace("{title}", title);
   }
 
+  const hiddenList = $("hiddenWindowList");
+  hiddenList.replaceChildren();
+  for (const windowInfo of windows.slice().reverse()) {
+    const row = document.createElement("div");
+    row.className = "hidden-window-row";
+
+    const copy = document.createElement("div");
+    copy.className = "hidden-window-copy";
+
+    const title = document.createElement("strong");
+    title.textContent = windowInfo.title || windowInfo.app_id || `#${windowInfo.id}`;
+
+    const meta = document.createElement("span");
+    meta.textContent = `#${windowInfo.id} · ${windowInfo.was_floating ? "floating" : "tiled"} · ws ${windowInfo.origin_workspace_id ?? "—"}`;
+
+    const restore = document.createElement("button");
+    restore.className = "button secondary";
+    restore.type = "button";
+    restore.textContent = t("restoreThis");
+    restore.addEventListener("click", () => restoreMinimized(false, windowInfo.id, restore));
+
+    copy.append(title, meta);
+    row.append(copy, restore);
+    hiddenList.append(row);
+  }
+
   $("restoreLastButton").disabled = count === 0;
   $("restoreAllButton").disabled = count === 0;
 
@@ -312,8 +338,8 @@ function renderMinimize() {
 function shortcutTitle(name) {
   return t({
     settings: "settingsShortcut",
-    minimize: "minimizeShortcut",
-    "restore-minimized": "restoreMinimizedShortcut",
+    hide: "hideShortcut",
+    "restore-hidden": "restoreHiddenShortcut",
     toggle: "toggleShortcut",
     peek: "peekShortcut",
     restore: "restoreShortcut"
@@ -346,13 +372,22 @@ function renderShortcuts() {
     key.className = "keycap";
     key.textContent = shortcut.suggested_bind;
 
+    const status = document.createElement("span");
+    status.className = `state-badge ${shortcut.conflict ? "bad" : shortcut.installed ? "ok" : ""}`;
+    status.textContent = shortcut.conflict
+      ? t("shortcutConflict")
+      : shortcut.installed
+        ? t("shortcutInstalled")
+        : t("shortcutFree");
+
     const copy = document.createElement("button");
     copy.className = "copy-button";
     copy.type = "button";
     copy.textContent = t("copy");
+    copy.disabled = shortcut.conflict;
     copy.addEventListener("click", () => copyText(kdlFor(shortcut)));
 
-    row.append(name, command, key, copy);
+    row.append(name, command, key, status, copy);
     list.append(row);
   }
 }
@@ -484,13 +519,16 @@ async function resetGeometry() {
   }
 }
 
-async function restoreMinimized(all) {
-  const button = all ? $("restoreAllButton") : $("restoreLastButton");
+async function restoreMinimized(all, windowId = null, sourceButton = null) {
+  const button = sourceButton || (all ? $("restoreAllButton") : $("restoreLastButton"));
   button.disabled = true;
   try {
-    const data = await api(all ? "/api/restore-all-minimized" : "/api/restore-minimized", {
-      method: "POST"
-    });
+    const endpoint = all
+      ? "/api/restore-all-minimized"
+      : windowId == null
+        ? "/api/restore-minimized"
+        : `/api/restore-hidden/${windowId}`;
+    const data = await api(endpoint, { method: "POST" });
     state.bootstrap = data;
     render();
     toast(all ? t("restoredAll") : t("restoredLast"), "success");

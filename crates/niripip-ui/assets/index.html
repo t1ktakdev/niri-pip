@@ -221,16 +221,16 @@
         </div>
 
         <div class="section-heading">
-          <h2 data-i18n="minimizeSectionTitle">Минимизация</h2>
-          <p data-i18n="minimizeSectionDesc">Убирает обычные окна в отдельный scratchpad и возвращает их в исходное состояние.</p>
+          <h2 data-i18n="minimizeSectionTitle">Скрытые окна</h2>
+          <p data-i18n="minimizeSectionDesc">Hide убирает окно из обычной работы, но приложение продолжает работать в фоне.</p>
         </div>
 
         <div class="settings-list">
           <div class="setting-row">
             <div class="setting-icon">—</div>
             <div class="setting-copy">
-              <strong data-i18n="minimizeEnabledTitle">niri-pip Minimize</strong>
-              <span data-i18n="minimizeEnabledDesc">Работает независимо от родной кнопки сворачивания приложений</span>
+              <strong data-i18n="minimizeEnabledTitle">Скрытие окон</strong>
+              <span data-i18n="minimizeEnabledDesc">Переносит окно в защищённый служебный workspace до возврата</span>
             </div>
             <label class="switch">
               <input id="minimizeEnabledToggle" type="checkbox">
@@ -241,8 +241,8 @@
           <div class="setting-row">
             <div class="setting-icon">◎</div>
             <div class="setting-copy">
-              <strong data-i18n="minimizeFocusTitle">Фокусировать окно после восстановления</strong>
-              <span data-i18n="minimizeFocusDesc">После restore перейти к возвращённому окну</span>
+              <strong data-i18n="minimizeFocusTitle">Фокусировать окно после возврата</strong>
+              <span data-i18n="minimizeFocusDesc">После Restore перейти к возвращённому окну</span>
             </div>
             <label class="switch">
               <input id="minimizeFocusToggle" type="checkbox">
@@ -253,12 +253,14 @@
           <div class="setting-row minimized-status-row">
             <div class="setting-icon">▱</div>
             <div class="setting-copy">
-              <strong data-i18n="minimizedNowTitle">Свернуто сейчас</strong>
-              <span id="minimizedWindowSummary" data-i18n="minimizedNone">Нет свернутых окон</span>
+              <strong data-i18n="minimizedNowTitle">Скрыто сейчас</strong>
+              <span id="minimizedWindowSummary" data-i18n="minimizedNone">Нет скрытых окон</span>
             </div>
             <span class="state-badge" id="minimizedCountBadge">0</span>
           </div>
         </div>
+
+        <div class="hidden-window-list" id="hiddenWindowList"></div>
 
         <div class="minimize-actions">
           <button class="button primary" id="restoreLastButton" data-i18n="restoreLast">Вернуть последнее</button>
