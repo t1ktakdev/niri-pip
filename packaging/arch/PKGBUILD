@@ -1,13 +1,13 @@
 # Maintainer: niri-pip contributors
 pkgname=niri-pip
-pkgver=0.2.1
+pkgver=0.3.0
 pkgrel=1
-pkgdesc='Sticky Picture-in-Picture and floating-window controller for Niri'
+pkgdesc='Picture-in-Picture companion, sticky windows and settings UI for Niri'
 arch=('x86_64')
 url='https://github.com/t1ktakdev/niri-pip'
 license=('MIT')
 install=niri-pip.install
-depends=('niri' 'systemd' 'bash' 'python')
+depends=('niri' 'systemd' 'bash' 'python' 'xdg-utils')
 optdepends=('playerctl: MPRIS media controls' 'fuzzel: controller menu' 'rofi: controller menu fallback' 'gum: controller menu fallback')
 makedepends=('cargo' 'git')
 source=("git+https://github.com/t1ktakdev/niri-pip.git#tag=v${pkgver}")
@@ -33,6 +33,7 @@ package() {
 
   install -Dm755 target/release/niripip "$pkgdir/usr/bin/niripip"
   install -Dm755 target/release/niripipd "$pkgdir/usr/bin/niripipd"
+  install -Dm755 target/release/niripip-ui "$pkgdir/usr/bin/niripip-ui"
   install -Dm755 integrations/inir/niripip-menu "$pkgdir/usr/bin/niripip-menu"
   install -Dm755 scripts/setup-niri-integration.sh "$pkgdir/usr/bin/niripip-integrate"
   install -Dm755 scripts/remove-niri-integration.sh "$pkgdir/usr/bin/niripip-unintegrate"

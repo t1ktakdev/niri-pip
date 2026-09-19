@@ -238,6 +238,28 @@ pub fn action_request(action: CompositorAction) -> Value {
                 "focus": focus
             }
         }),
+        CompositorAction::MoveWindowToWorkspaceName {
+            window_id,
+            workspace_name,
+            focus,
+        } => json!({
+            "MoveWindowToWorkspace": {
+                "window_id": window_id,
+                "reference": {"Name": workspace_name},
+                "focus": focus
+            }
+        }),
+        CompositorAction::SetWorkspaceName { workspace_id, name } => json!({
+            "SetWorkspaceName": {
+                "name": name,
+                "workspace": {"Id": workspace_id}
+            }
+        }),
+        CompositorAction::UnsetWorkspaceName { name } => json!({
+            "UnsetWorkspaceName": {
+                "reference": {"Name": name}
+            }
+        }),
     };
     json!({"Action": body})
 }
@@ -392,6 +414,40 @@ mod tests {
                 "window_id":42,
                 "reference":{"Id":7},
                 "focus":false
+            }}})
+        );
+    }
+
+    #[test]
+    fn scratchpad_actions_use_named_workspace_references() {
+        assert_eq!(
+            action_request(CompositorAction::SetWorkspaceName {
+                workspace_id: 9,
+                name: "niri-pip:scratchpad".into(),
+            }),
+            json!({"Action":{"SetWorkspaceName":{
+                "name":"niri-pip:scratchpad",
+                "workspace":{"Id":9}
+            }}})
+        );
+        assert_eq!(
+            action_request(CompositorAction::MoveWindowToWorkspaceName {
+                window_id: 42,
+                workspace_name: "niri-pip:scratchpad".into(),
+                focus: false,
+            }),
+            json!({"Action":{"MoveWindowToWorkspace":{
+                "window_id":42,
+                "reference":{"Name":"niri-pip:scratchpad"},
+                "focus":false
+            }}})
+        );
+        assert_eq!(
+            action_request(CompositorAction::UnsetWorkspaceName {
+                name: "niri-pip:scratchpad".into(),
+            }),
+            json!({"Action":{"UnsetWorkspaceName":{
+                "reference":{"Name":"niri-pip:scratchpad"}
             }}})
         );
     }

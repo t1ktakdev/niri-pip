@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="niripip-token" content="__NIRIPIP_TOKEN__">
+  <title>niri-pip — Settings</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon" aria-hidden="true">
+          <span class="brand-square brand-square-a"></span>
+          <span class="brand-square brand-square-b"></span>
+        </div>
+        <div>
+          <div class="brand-name">niri-pip</div>
+          <div class="brand-version">v__NIRIPIP_VERSION__</div>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Settings">
+        <button class="nav-item active" data-page="general">
+          <span class="nav-icon">⌂</span>
+          <span data-i18n="navGeneral">Общие</span>
+        </button>
+        <button class="nav-item" data-page="behavior">
+          <span class="nav-icon">☷</span>
+          <span data-i18n="navBehavior">Поведение</span>
+        </button>
+        <button class="nav-item" data-page="integration">
+          <span class="nav-icon">↗</span>
+          <span data-i18n="navIntegration">Интеграция</span>
+        </button>
+        <button class="nav-item" data-page="shortcuts">
+          <span class="nav-icon">⌨</span>
+          <span data-i18n="navShortcuts">Горячие клавиши</span>
+        </button>
+        <button class="nav-item" data-page="about">
+          <span class="nav-icon">ⓘ</span>
+          <span data-i18n="navAbout">О программе</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="mini-status">
+          <span class="status-dot" id="daemonDot"></span>
+          <span data-i18n="daemonLabel">Daemon</span>
+          <span class="status-value" id="daemonStatus">—</span>
+        </div>
+        <div class="mini-status">
+          <span class="status-dot" id="niriDot"></span>
+          <span data-i18n="niriLabel">Niri IPC</span>
+          <span class="status-value" id="niriStatus">—</span>
+        </div>
+        <div class="tagline" data-i18n="tagline">Маленькие окна.<br>Большие возможности.</div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section class="page active" data-page-panel="general">
+        <header class="page-header">
+          <h1 data-i18n="generalTitle">Общие</h1>
+          <p data-i18n="generalSubtitle">Основные настройки niri-pip. Просто и удобно.</p>
+        </header>
+
+        <div class="settings-list">
+          <div class="setting-row">
+            <div class="setting-icon">◎</div>
+            <div class="setting-copy">
+              <strong data-i18n="languageTitle">Язык интерфейса</strong>
+              <span data-i18n="languageDesc">Выберите язык приложения</span>
+            </div>
+            <select id="languageSelect" class="control select-control">
+              <option value="auto">Automatic</option>
+              <option value="ru">Русский</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">▣</div>
+            <div class="setting-copy">
+              <strong data-i18n="autoDetectTitle">Автоматически определять PiP</strong>
+              <span data-i18n="autoDetectDesc">Автоматически распознавать PiP-окна</span>
+            </div>
+            <label class="switch">
+              <input id="autoDetectToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">▷</div>
+            <div class="setting-copy">
+              <strong data-i18n="autostartTitle">Запускать вместе с Niri</strong>
+              <span data-i18n="autostartDesc">Автоматический запуск при старте сессии</span>
+            </div>
+            <label class="switch">
+              <input id="autostartToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">⌗</div>
+            <div class="setting-copy">
+              <strong data-i18n="rememberGeometryTitle">Запоминать размер и позицию</strong>
+              <span data-i18n="rememberGeometryDesc">Учиться на ваших ручных изменениях PiP-окна</span>
+            </div>
+            <label class="switch">
+              <input id="rememberGeometryToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row opacity-row">
+            <div class="setting-icon">◉</div>
+            <div class="setting-copy">
+              <strong data-i18n="opacityTitle">Прозрачность по умолчанию</strong>
+              <span data-i18n="opacityDesc">Прозрачность новых PiP-окон</span>
+            </div>
+            <div class="range-control">
+              <input id="opacityRange" type="range" min="10" max="100" step="5">
+              <output id="opacityValue">100%</output>
+            </div>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary data-i18n="advancedTitle">Дополнительные настройки</summary>
+          <div class="advanced-body">
+            <div class="advanced-note" data-i18n="advancedGeneralNote">
+              Редкие технические параметры остаются в config.toml, чтобы основной экран был простым.
+            </div>
+          </div>
+        </details>
+
+        <div class="page-footer">
+          <div class="info-note">
+            <span class="info-icon">i</span>
+            <span data-i18n="geometryNote">Размер и позиция PiP запоминаются автоматически, когда вы меняете окно вручную.</span>
+          </div>
+          <div class="footer-actions">
+            <button class="button secondary" id="resetGeometryButton" data-i18n="resetGeometry">Сбросить размер и позицию</button>
+            <button class="button secondary" id="openConfigButtonGeneral" data-i18n="openConfig">Открыть config.toml</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page-panel="behavior">
+        <header class="page-header">
+          <h1 data-i18n="behaviorTitle">Поведение</h1>
+          <p data-i18n="behaviorSubtitle">Как PiP ведёт себя при переключении workspace и управлении окнами.</p>
+        </header>
+
+        <div class="settings-list">
+          <div class="setting-row">
+            <div class="setting-icon">▤</div>
+            <div class="setting-copy">
+              <strong data-i18n="followTitle">Следовать за workspace</strong>
+              <span data-i18n="followDesc">Перемещать PiP вместе с рабочим пространством</span>
+            </div>
+            <label class="switch">
+              <input id="followToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">⌾</div>
+            <div class="setting-copy">
+              <strong data-i18n="followModeTitle">Режим follow</strong>
+              <span data-i18n="followModeDesc">Куда переносить PiP при смене фокуса</span>
+            </div>
+            <select id="followModeSelect" class="control select-control">
+              <option value="follow-workspace" data-i18n="followWorkspace">Текущий workspace</option>
+              <option value="follow-focused-output" data-i18n="followFocusedOutput">Активный монитор</option>
+              <option value="stay-on-output" data-i18n="stayOnOutput">Оставаться на мониторе</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">↶</div>
+            <div class="setting-copy">
+              <strong data-i18n="restoreTitle">Восстанавливать исходное состояние</strong>
+              <span data-i18n="restoreDesc">После unpin вернуть workspace, tiling/floating и размер</span>
+            </div>
+            <label class="switch">
+              <input id="restoreToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">◌</div>
+            <div class="setting-copy">
+              <strong data-i18n="focusTitle">Не красть фокус</strong>
+              <span data-i18n="focusDesc">PiP появляется, не перебивая текущее окно</span>
+            </div>
+            <label class="switch">
+              <input id="focusToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">▱</div>
+            <div class="setting-copy">
+              <strong data-i18n="aspectTitle">Сохранять пропорции</strong>
+              <span data-i18n="aspectDesc">Сохранять соотношение сторон при автоматическом размере</span>
+            </div>
+            <label class="switch">
+              <input id="aspectToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="section-heading">
+          <h2 data-i18n="minimizeSectionTitle">Минимизация</h2>
+          <p data-i18n="minimizeSectionDesc">Убирает обычные окна в отдельный scratchpad и возвращает их в исходное состояние.</p>
+        </div>
+
+        <div class="settings-list">
+          <div class="setting-row">
+            <div class="setting-icon">—</div>
+            <div class="setting-copy">
+              <strong data-i18n="minimizeEnabledTitle">niri-pip Minimize</strong>
+              <span data-i18n="minimizeEnabledDesc">Работает независимо от родной кнопки сворачивания приложений</span>
+            </div>
+            <label class="switch">
+              <input id="minimizeEnabledToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-icon">◎</div>
+            <div class="setting-copy">
+              <strong data-i18n="minimizeFocusTitle">Фокусировать окно после восстановления</strong>
+              <span data-i18n="minimizeFocusDesc">После restore перейти к возвращённому окну</span>
+            </div>
+            <label class="switch">
+              <input id="minimizeFocusToggle" type="checkbox">
+              <span></span>
+            </label>
+          </div>
+
+          <div class="setting-row minimized-status-row">
+            <div class="setting-icon">▱</div>
+            <div class="setting-copy">
+              <strong data-i18n="minimizedNowTitle">Свернуто сейчас</strong>
+              <span id="minimizedWindowSummary" data-i18n="minimizedNone">Нет свернутых окон</span>
+            </div>
+            <span class="state-badge" id="minimizedCountBadge">0</span>
+          </div>
+        </div>
+
+        <div class="minimize-actions">
+          <button class="button primary" id="restoreLastButton" data-i18n="restoreLast">Вернуть последнее</button>
+          <button class="button secondary" id="restoreAllButton" data-i18n="restoreAll">Вернуть все</button>
+        </div>
+
+        <div class="compat-note" id="nativeMinimizeCompatibility">
+          <div class="compat-head">
+            <strong data-i18n="compatTitle">Совместимость Niri</strong>
+            <span class="state-badge" id="nativeMinimizeBadge">—</span>
+          </div>
+          <p id="nativeMinimizeText">—</p>
+        </div>
+
+        <div class="simple-note" data-i18n="behaviorNote">
+          Настройки применяются сразу после автосохранения.
+        </div>
+      </section>
+
+      <section class="page" data-page-panel="integration">
+        <header class="page-header">
+          <h1 data-i18n="integrationTitle">Интеграция</h1>
+          <p data-i18n="integrationSubtitle">Состояние daemon, Niri IPC и пользовательской установки.</p>
+        </header>
+
+        <div class="status-card">
+          <div class="status-row">
+            <div>
+              <strong>niri-pip daemon</strong>
+              <span id="daemonDetail">—</span>
+            </div>
+            <span class="state-badge" id="daemonBadge">—</span>
+          </div>
+          <div class="status-row">
+            <div>
+              <strong>Niri IPC</strong>
+              <span id="niriDetail">—</span>
+            </div>
+            <span class="state-badge" id="niriBadge">—</span>
+          </div>
+          <div class="status-row">
+            <div>
+              <strong data-i18n="autostartStatusTitle">Автозапуск</strong>
+              <span data-i18n="autostartStatusDesc">systemd --user</span>
+            </div>
+            <span class="state-badge" id="autostartBadge">—</span>
+          </div>
+          <div class="status-row">
+            <div>
+              <strong>iNiR</strong>
+              <span data-i18n="inirDesc">Runtime KDL include</span>
+            </div>
+            <span class="state-badge" id="inirBadge">—</span>
+          </div>
+          <div class="status-row">
+            <div>
+              <strong data-i18n="desktopEntryTitle">Меню приложений</strong>
+              <span>niri-pip.desktop</span>
+            </div>
+            <span class="state-badge" id="desktopBadge">—</span>
+          </div>
+        </div>
+
+        <div class="integration-actions">
+          <button class="button primary" id="restartDaemonButton" data-i18n="restartDaemon">Перезапустить daemon</button>
+          <button class="button secondary" id="openConfigButtonIntegration" data-i18n="openConfig">Открыть config.toml</button>
+        </div>
+
+        <div class="path-box">
+          <span data-i18n="configPathLabel">Конфигурация</span>
+          <code id="configPath">—</code>
+        </div>
+      </section>
+
+      <section class="page" data-page-panel="shortcuts">
+        <header class="page-header">
+          <h1 data-i18n="shortcutsTitle">Горячие клавиши</h1>
+          <p data-i18n="shortcutsSubtitle">Рекомендуемые bind'ы для Niri. Мы не переписываем ваш config автоматически.</p>
+        </header>
+
+        <div class="shortcut-list" id="shortcutList"></div>
+
+        <div class="simple-note" data-i18n="shortcutsNote">
+          Скопируйте нужную строку в свой блок binds. Это безопаснее, чем автоматически менять пользовательский Niri config.
+        </div>
+      </section>
+
+      <section class="page" data-page-panel="about">
+        <header class="page-header">
+          <h1 data-i18n="aboutTitle">О программе</h1>
+          <p data-i18n="aboutSubtitle">Небольшой companion для Picture-in-Picture в Niri.</p>
+        </header>
+
+        <div class="about-card">
+          <div class="about-mark">
+            <span class="brand-square brand-square-a"></span>
+            <span class="brand-square brand-square-b"></span>
+          </div>
+          <div class="about-name">niri-pip</div>
+          <div class="about-version" id="aboutVersion">v__NIRIPIP_VERSION__</div>
+          <p data-i18n="aboutCopy">Автоматический PiP, sticky-окна и аккуратное восстановление состояния для Niri.</p>
+          <div class="about-tech">Rust · Wayland · Niri IPC · MIT</div>
+        </div>
+
+        <div class="about-links">
+          <a href="https://github.com/t1ktakdev/niri-pip" target="_blank" rel="noreferrer">GitHub ↗</a>
+          <a href="https://github.com/t1ktakdev/niri-pip#readme" target="_blank" rel="noreferrer" data-i18n="documentation">Документация ↗</a>
+          <a href="https://github.com/t1ktakdev/niri-pip/issues" target="_blank" rel="noreferrer" data-i18n="reportIssue">Сообщить о проблеме ↗</a>
+        </div>
+      </section>
+
+      <div class="save-indicator" id="saveIndicator" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="assertive"></div>
+  <div class="loading-screen" id="loadingScreen">
+    <div class="loading-logo">
+      <span class="brand-square brand-square-a"></span>
+      <span class="brand-square brand-square-b"></span>
+    </div>
+    <span>niri-pip</span>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

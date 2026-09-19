@@ -257,3 +257,85 @@ async fn controller_preserves_free_resize_and_follow_is_runtime_switchable() {
         .expect("unlock current PiP geometry");
     assert!(!engine.status_snapshot().windows[0].geometry_locked);
 }
+
+#[tokio::test]
+async fn universal_overlay_and_peek_restore_without_focus_actions() {
+    let backend = MockNiriBackend::default().with_outputs(outputs());
+    let mut engine =
+        Engine::new(Config::default(), PersistentState::default()).expect("valid default engine");
+
+    engine.handle_event(CompositorEvent::Connected {
+        version: "26.04".into(),
+    });
+    engine.handle_event(CompositorEvent::OutputsChanged(outputs()));
+    engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+        workspace(1, 1, true),
+        workspace(2, 2, false),
+    ]));
+
+    let mut terminal = window(7, "shell", "kitty", 1, (900, 700), true);
+    terminal.layout.tile_pos_in_workspace_view = Some((220.0, 120.0));
+    engine.handle_event(CompositorEvent::WindowOpenedOrChanged(terminal.clone()));
+
+    let overlay = engine.overlay(Some(7), None).expect("create overlay");
+    assert!(overlay.iter().any(|effect| matches!(
+        effect,
+        Effect::Action(CompositorAction::MoveWindowToFloating { id: 7 })
+    )));
+    assert!(overlay.iter().any(|effect| matches!(
+        effect,
+        Effect::Action(CompositorAction::SetWindowWidth { id: 7, .. })
+    )));
+    assert!(!overlay
+        .iter()
+        .any(|effect| matches!(effect, Effect::Action(CompositorAction::FocusWindow { .. }))));
+    apply(&backend, overlay).await;
+
+    terminal.is_floating = true;
+    terminal.layout.window_size = (520, 340);
+    terminal.layout.tile_size = (520.0, 340.0);
+    terminal.layout.tile_pos_in_workspace_view = Some((1300.0, 650.0));
+    engine.handle_event(CompositorEvent::WindowOpenedOrChanged(terminal.clone()));
+
+    apply(
+        &backend,
+        engine
+            .set_peek(Some(7), Some(true))
+            .expect("enter temporary peek"),
+    )
+    .await;
+    assert!(engine.status_snapshot().windows[0].peeking);
+
+    apply(
+        &backend,
+        engine
+            .set_peek(Some(7), Some(false))
+            .expect("leave temporary peek"),
+    )
+    .await;
+    assert!(!engine.status_snapshot().windows[0].peeking);
+
+    let unpin = engine.unpin(Some(7)).expect("restore original tiled state");
+    assert!(unpin.iter().any(|effect| matches!(
+        effect,
+        Effect::Action(CompositorAction::MoveWindowToTiling { id: 7 })
+    )));
+    assert!(unpin.iter().any(|effect| matches!(
+        effect,
+        Effect::Action(CompositorAction::SetWindowWidth {
+            id: 7,
+            change: niripip_core::SizeChange::SetFixed(900)
+        })
+    )));
+    assert!(unpin.iter().any(|effect| matches!(
+        effect,
+        Effect::Action(CompositorAction::SetWindowHeight {
+            id: 7,
+            change: niripip_core::SizeChange::SetFixed(700)
+        })
+    )));
+    assert!(!unpin
+        .iter()
+        .any(|effect| matches!(effect, Effect::Action(CompositorAction::FocusWindow { .. }))));
+    apply(&backend, unpin).await;
+}

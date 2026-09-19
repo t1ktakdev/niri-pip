@@ -6,7 +6,8 @@ niri-pip integrates with iNiR through stable external boundaries and does not re
 
 Installed pieces:
 
-- `niripip-menu` — fuzzel controller with rofi/gum fallbacks;
+- `niripip-ui` — local settings application opened by `niripip ui`;
+- `niripip-menu` — compact fuzzel controller with rofi/gum fallbacks;
 - `niripip-integrate` / `niripip-unintegrate` — safe runtime KDL include management;
 - `~/.config/fish/conf.d/niri-pip.fish` — adds `~/.local/bin` to fish PATH;
 - `~/.local/share/applications/niri-pip.desktop` — application-launcher entry;
@@ -14,16 +15,24 @@ Installed pieces:
 
 The include points to `~/.config/niri/niri-pip-runtime.kdl`. Only niri-pip owns that runtime file. This keeps PiP opacity independent from iNiR's global inactive-window rule.
 
-Open the controller:
+Open the settings application:
+
+```sh
+niripip ui
+```
+
+The settings app supports **Automatic / Русский / English** and stores the preference in `~/.config/niri-pip/ui-language`.
+
+The compact power-user controller is still available:
 
 ```sh
 niripip menu
 ```
 
-The controller auto-detects Russian/English locale and has a persistent **Language / Язык** selector.
-
-Suggested shortcut:
+Suggested shortcuts:
 
 ```kdl
-Mod+Alt+P { spawn "niripip" "menu"; }
+Mod+M { spawn "niripip" "minimize"; }
+Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+Mod+Alt+P { spawn "niripip" "ui"; }
 ```

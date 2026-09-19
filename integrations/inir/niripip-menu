@@ -11,14 +11,18 @@ mkdir -p "$(dirname "$LANG_FILE")"
 
 if [[ -n "${NIRIPIP_LANG:-}" ]]; then
   UI_LANG="${NIRIPIP_LANG,,}"
-elif [[ -s "$LANG_FILE" ]]; then
-  UI_LANG="$(tr -d '[:space:]' < "$LANG_FILE" | tr '[:upper:]' '[:lower:]')"
 else
-  locale_hint="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
-  case "${locale_hint,,}" in
-    ru*) UI_LANG="ru" ;;
-    *) UI_LANG="en" ;;
-  esac
+  saved_lang="auto"
+  [[ ! -s "$LANG_FILE" ]] || saved_lang="$(tr -d '[:space:]' < "$LANG_FILE" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$saved_lang" == "auto" ]]; then
+    locale_hint="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
+    case "${locale_hint,,}" in
+      ru*) UI_LANG="ru" ;;
+      *) UI_LANG="en" ;;
+    esac
+  else
+    UI_LANG="$saved_lang"
+  fi
 fi
 [[ "$UI_LANG" == "ru" ]] || UI_LANG="en"
 
@@ -51,6 +55,13 @@ notify_error() {
 
 if [[ "$UI_LANG" == "ru" ]]; then
   PROMPT="PiP > "
+  MINIMIZE="Свернуть текущее окно"
+  RESTORE_MINIMIZED="Вернуть последнее свернутое"
+  RESTORE_ALL="Вернуть все свернутые"
+  PIN="Закрепить текущее окно"
+  OVERLAY="Сделать текущее окно overlay"
+  PEEK="Peek: увеличить / вернуть"
+  UNPIN="Открепить и восстановить"
   PLAY="Воспроизвести / Пауза"
   BACK="Назад 10 сек"
   FORWARD="Вперёд 10 сек"
@@ -80,6 +91,13 @@ if [[ "$UI_LANG" == "ru" ]]; then
   BAD_SIZE="Используй ШИРИНАxВЫСОТА, например 1131x636"
 else
   PROMPT="PiP > "
+  MINIMIZE="Minimize focused window"
+  RESTORE_MINIMIZED="Restore last minimized"
+  RESTORE_ALL="Restore all minimized"
+  PIN="Pin focused window"
+  OVERLAY="Make focused window an overlay"
+  PEEK="Peek: enlarge / restore"
+  UNPIN="Unpin and restore"
   PLAY="Play / Pause"
   BACK="Seek -10s"
   FORWARD="Seek +10s"
@@ -111,6 +129,10 @@ fi
 
 main_menu() {
   printf '%s\n' \
+    "$PIN" \
+    "$OVERLAY" \
+    "$PEEK" \
+    "$UNPIN" \
     "$PLAY" \
     "$BACK" \
     "$FORWARD" \
@@ -137,6 +159,13 @@ choice="$(main_menu || true)"
 [[ -n "$choice" ]] || exit 0
 
 case "$choice" in
+  "$MINIMIZE") "$NIRIPIP" minimize ;;
+  "$RESTORE_MINIMIZED") "$NIRIPIP" restore-minimized ;;
+  "$RESTORE_ALL") "$NIRIPIP" restore-all ;;
+  "$PIN") "$NIRIPIP" pin ;;
+  "$OVERLAY") "$NIRIPIP" overlay ;;
+  "$PEEK") "$NIRIPIP" peek ;;
+  "$UNPIN") "$NIRIPIP" unpin ;;
   "$PLAY") "$NIRIPIP" media play-pause ;;
   "$BACK") "$NIRIPIP" media back 10 ;;
   "$FORWARD") "$NIRIPIP" media forward 10 ;;

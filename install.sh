@@ -30,27 +30,34 @@ command -v systemctl >/dev/null 2>&1 || die "systemd user tools are required"
 command -v niri >/dev/null 2>&1 || die "niri was not found in PATH"
 command -v python >/dev/null 2>&1 || die "python is required (Arch: sudo pacman -S python)"
 
-if [[ -x "${ROOT_DIR}/bin/niripip" && -x "${ROOT_DIR}/bin/niripipd" ]]; then
+if [[ -x "${ROOT_DIR}/bin/niripip" && -x "${ROOT_DIR}/bin/niripipd" && -x "${ROOT_DIR}/bin/niripip-ui" ]]; then
     CLI_SOURCE="${ROOT_DIR}/bin/niripip"
     DAEMON_SOURCE="${ROOT_DIR}/bin/niripipd"
+    UI_SOURCE="${ROOT_DIR}/bin/niripip-ui"
     log "Using prebuilt niri-pip binaries"
 else
     command -v cargo >/dev/null 2>&1 || die "cargo is required for a source install (Arch: sudo pacman -S rust)"
     command -v rustc >/dev/null 2>&1 || die "rustc is required for a source install"
-    log "Building niri-pip 0.2.1 in release mode"
+    log "Building niri-pip from source in release mode"
     cd "$ROOT_DIR"
-    cargo build --release --workspace
+    cargo build --release --workspace --locked
     CLI_SOURCE="${ROOT_DIR}/target/release/niripip"
     DAEMON_SOURCE="${ROOT_DIR}/target/release/niripipd"
+    UI_SOURCE="${ROOT_DIR}/target/release/niripip-ui"
 fi
+
+PROJECT_VERSION="$("$CLI_SOURCE" --version | awk '{print $2}')"
+[[ "$PROJECT_VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-.][0-9A-Za-z.-]+)?$ ]] \
+    || die "could not determine niri-pip version from $CLI_SOURCE"
 
 log "Installing user binaries"
 install -d -m 0755 "$BIN_DIR"
-for name in niripip niripipd niripip-menu niripip-integrate niripip-unintegrate; do
+for name in niripip niripipd niripip-ui niripip-menu niripip-integrate niripip-unintegrate; do
     backup_if_exists "$BIN_DIR/$name"
 done
 install -m 0755 "$CLI_SOURCE" "$BIN_DIR/niripip"
 install -m 0755 "$DAEMON_SOURCE" "$BIN_DIR/niripipd"
+install -m 0755 "$UI_SOURCE" "$BIN_DIR/niripip-ui"
 install -m 0755 "$ROOT_DIR/integrations/inir/niripip-menu" "$BIN_DIR/niripip-menu"
 install -m 0755 "$ROOT_DIR/scripts/setup-niri-integration.sh" "$BIN_DIR/niripip-integrate"
 install -m 0755 "$ROOT_DIR/scripts/remove-niri-integration.sh" "$BIN_DIR/niripip-unintegrate"
@@ -126,7 +133,8 @@ else
 fi
 
 printf '\n'
-log "niri-pip 0.2.1 installed"
+log "niri-pip ${PROJECT_VERSION} installed"
+printf 'Settings:   %s\n' "${BIN_DIR}/niripip ui"
 printf 'Controller: %s\n' "${BIN_DIR}/niripip menu"
 printf 'Status:     %s\n' "${BIN_DIR}/niripip status"
 printf 'Service:    systemctl --user status niripip.service\n'

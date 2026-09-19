@@ -1,9 +1,9 @@
 use crate::{
     corner_placement, CompositorAction, CompositorEvent, Config, ControlPreset, DetectionAction,
-    DetectorEngine, DetectorError, FollowMode, OutputInfo, PersistentState, Placement,
-    PlacementPlan, PositionChange, PositionMode, RememberedControls, RememberedGeometry,
-    SizeChange, StatusSnapshot, TrackedWindowSnapshot, WindowInfo, WindowLayout, WorkspaceInfo,
-    STATE_SCHEMA_VERSION,
+    DetectorEngine, DetectorError, FollowMode, MinimizedWindowSnapshot, MinimizedWindowState,
+    OutputInfo, PersistentState, Placement, PlacementPlan, PositionChange, PositionMode,
+    RememberedControls, RememberedGeometry, SizeChange, StatusSnapshot, TrackedWindowSnapshot,
+    WindowInfo, WindowLayout, WorkspaceInfo, STATE_SCHEMA_VERSION,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -23,6 +23,30 @@ pub enum EngineError {
     AmbiguousTrackedWindow,
     #[error("window #{0} is not pinned")]
     NotPinned(u64),
+    #[error("window #{0} is automatic PiP; use preset or peek instead of overlay")]
+    AutoPipOverlayConflict(u64),
+    #[error("window #{0} is in temporary peek mode; exit peek before changing its base geometry")]
+    PeekActive(u64),
+    #[error("window #{0} geometry is unavailable; wait for Niri layout/output state and retry")]
+    GeometryUnavailable(u64),
+    #[error("unknown overlay profile '{0}'")]
+    UnknownProfile(String),
+    #[error("niri-pip minimize is disabled")]
+    MinimizeDisabled,
+    #[error("window #{0} is already minimized")]
+    AlreadyMinimized(u64),
+    #[error("window #{0} is managed by niri-pip; unpin it before minimizing")]
+    ManagedWindowCannotMinimize(u64),
+    #[error("window #{0} is not minimized")]
+    NotMinimized(u64),
+    #[error("no minimized windows")]
+    NoMinimizedWindows,
+    #[error("no empty workspace is available for the niri-pip scratchpad")]
+    ScratchpadUnavailable,
+    #[error("scratchpad workspace name '{0}' is already in use")]
+    ScratchpadNameInUse(String),
+    #[error("scratchpad workspace '{0}' contains windows not managed by niri-pip")]
+    ScratchpadBusy(String),
     #[error("niri-pip is disabled")]
     Disabled,
     #[error("invalid size {0}x{1}; minimum is 120x68 and each dimension must fit Niri IPC i32")]
@@ -37,6 +61,27 @@ pub enum EngineError {
 pub enum TrackedMode {
     AutoPip,
     ManualPin,
+    ManualOverlay,
+}
+
+impl TrackedMode {
+    fn is_manual(self) -> bool {
+        matches!(self, Self::ManualPin | Self::ManualOverlay)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OriginState {
+    workspace_id: Option<u64>,
+    was_floating: bool,
+    size: Option<(u32, u32)>,
+    geometry: Option<RememberedGeometry>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PeekRestore {
+    geometry: RememberedGeometry,
+    managed_size: Option<(u32, u32)>,
 }
 
 #[derive(Debug)]
@@ -52,13 +97,14 @@ struct TrackedWindow {
     score: Option<i32>,
     follow_enabled: bool,
     follow_mode: FollowMode,
-    original_was_floating: bool,
+    origin: Option<OriginState>,
     placement: Placement,
     managed_size: Option<(u32, u32)>,
     pending_workspace: Option<PendingWorkspaceMove>,
     suppress_geometry_until: Instant,
     geometry_locked: bool,
     locked_geometry: Option<RememberedGeometry>,
+    peek_restore: Option<PeekRestore>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +116,23 @@ pub enum Effect {
 pub struct PresetApplication {
     pub effects: Vec<Effect>,
     pub opacity_percent: Option<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MinimizeApplication {
+    pub window_id: u64,
+    pub effects: Vec<Effect>,
+    state: MinimizedWindowState,
+    was_focused: bool,
+    created_scratchpad_workspace: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RestoreApplication {
+    pub effects: Vec<Effect>,
+    states: Vec<MinimizedWindowState>,
+    scratchpad_workspace_id: u64,
+    cleanup_scratchpad: bool,
 }
 
 #[derive(Debug)]
@@ -167,7 +230,7 @@ impl Engine {
                     return Vec::new();
                 }
                 self.outputs = outputs;
-                self.reconcile_unplaced_auto_pip()
+                self.reconcile_managed_placement()
             }
             CompositorEvent::WorkspacesChanged(workspaces) => {
                 self.workspaces = workspaces.into_iter().map(|w| (w.id, w)).collect();
@@ -177,7 +240,7 @@ impl Engine {
                     .find(|w| w.is_focused)
                     .map(|w| w.id);
                 let mut effects = self.reconcile_workspace_follow();
-                effects.extend(self.reconcile_unplaced_auto_pip());
+                effects.extend(self.reconcile_managed_placement());
                 effects
             }
             CompositorEvent::WorkspaceActivated { id, focused } => {
@@ -214,13 +277,20 @@ impl Engine {
                 self.ignored_until_close.remove(&id);
                 self.candidate_opened_at.remove(&id);
                 self.candidate_previous_focus.remove(&id);
+                let before = self.persistent.minimized.len();
+                self.persistent
+                    .minimized
+                    .retain(|entry| entry.window_id != id);
+                if self.persistent.minimized.len() != before {
+                    self.mark_persistent_dirty();
+                }
                 if self.focused_window == Some(id) {
                     self.focused_window = None;
                 }
                 if self.previous_focused_window == Some(id) {
                     self.previous_focused_window = None;
                 }
-                Vec::new()
+                self.scratchpad_cleanup_effect(None).into_iter().collect()
             }
             CompositorEvent::WindowFocusChanged { id } => {
                 let restore = id.and_then(|focused_id| self.focus_restore_effect(focused_id));
@@ -253,11 +323,21 @@ impl Engine {
         self.candidate_opened_at.retain(|id, _| live.contains(id));
         self.candidate_previous_focus
             .retain(|id, _| live.contains(id));
+        let minimized_before = self.persistent.minimized.len();
+        self.persistent
+            .minimized
+            .retain(|entry| live.contains(&entry.window_id));
+        if self.persistent.minimized.len() != minimized_before {
+            self.mark_persistent_dirty();
+        }
         self.windows = windows.into_iter().map(|w| (w.id, w)).collect();
         self.focused_window = self.windows.values().find(|w| w.is_focused).map(|w| w.id);
 
         let ids: Vec<u64> = self.windows.keys().copied().collect();
         let mut effects = Vec::new();
+        if let Some(effect) = self.scratchpad_cleanup_effect(None) {
+            effects.push(effect);
+        }
         for id in ids {
             effects.extend(self.classify_or_reconcile(id, false, true));
         }
@@ -313,6 +393,14 @@ impl Engine {
         if self.tracked.contains_key(&id) {
             return self.reconcile_window(id);
         }
+        if self
+            .persistent
+            .minimized
+            .iter()
+            .any(|entry| entry.window_id == id)
+        {
+            return Vec::new();
+        }
         if !self.enabled
             || !self.config.general.auto_detect
             || self.ignored_until_close.contains(&id)
@@ -356,13 +444,14 @@ impl Engine {
                 score: Some(matched.score),
                 follow_enabled: controls.follow_enabled,
                 follow_mode: controls.follow_mode,
-                original_was_floating: window.is_floating,
+                origin: None,
                 placement: controls.placement,
                 managed_size: Some(managed_size),
                 pending_workspace: None,
                 suppress_geometry_until: suppress,
                 geometry_locked: controls.geometry_locked,
                 locked_geometry,
+                peek_restore: None,
             },
         );
         if adopt_existing_geometry && !controls.geometry_locked {
@@ -576,12 +665,13 @@ impl Engine {
             return Vec::new();
         };
         let mode = tracked.mode;
+        let peeking = tracked.peek_restore.is_some();
         let mut effects = Vec::new();
         if !window.is_floating {
             effects.push(Effect::Action(CompositorAction::MoveWindowToFloating {
                 id,
             }));
-            if mode == TrackedMode::AutoPip {
+            if mode == TrackedMode::AutoPip || mode == TrackedMode::ManualOverlay || peeking {
                 let (w, h) = self.desired_size(id);
                 effects.push(Effect::Action(CompositorAction::SetWindowWidth {
                     id,
@@ -603,14 +693,19 @@ impl Engine {
         effects
     }
 
-    fn reconcile_unplaced_auto_pip(&mut self) -> Vec<Effect> {
+    fn reconcile_managed_placement(&mut self) -> Vec<Effect> {
         if !self.enabled {
             return Vec::new();
         }
         let ids: Vec<u64> = self
             .tracked
             .iter()
-            .filter_map(|(id, t)| (t.mode == TrackedMode::AutoPip).then_some(*id))
+            .filter_map(|(id, t)| {
+                (t.mode == TrackedMode::AutoPip
+                    || t.mode == TrackedMode::ManualOverlay
+                    || t.peek_restore.is_some())
+                .then_some(*id)
+            })
             .collect();
         let mut effects = Vec::new();
         for id in ids {
@@ -658,6 +753,7 @@ impl Engine {
 
         let mode = tracked.mode;
         let geometry_locked = tracked.geometry_locked;
+        let peeking = tracked.peek_restore.is_some();
         let mut effects = vec![Effect::Action(CompositorAction::MoveWindowToWorkspace {
             window_id: id,
             workspace_id: target,
@@ -671,7 +767,11 @@ impl Engine {
             t.suppress_geometry_until =
                 Instant::now() + Duration::from_millis(self.config.general.action_suppression_ms);
         }
-        if mode == TrackedMode::AutoPip || geometry_locked {
+        if mode == TrackedMode::AutoPip
+            || mode == TrackedMode::ManualOverlay
+            || geometry_locked
+            || peeking
+        {
             let (w, h) = self.desired_size(id);
             if let Some(plan) = self.placement_for_tracked(id, (w, h)) {
                 effects.push(place_effect(id, plan));
@@ -750,6 +850,13 @@ impl Engine {
 
     fn placement_for_tracked(&self, id: u64, size: (u32, u32)) -> Option<PlacementPlan> {
         let tracked = self.tracked.get(&id)?;
+        if tracked.peek_restore.is_some() {
+            return self.placement_plan(
+                self.follow_target_for(id),
+                size,
+                self.config.peek.position,
+            );
+        }
         if let Some(locked) = tracked.locked_geometry {
             return Some(PlacementPlan {
                 x_percent: locked.x_percent,
@@ -823,7 +930,7 @@ impl Engine {
             window.layout = layout.clone();
         }
 
-        let Some((mode, suppress_geometry_until, detector_name, geometry_locked, locked)) =
+        let Some((mode, suppress_geometry_until, detector_name, geometry_locked, locked, peeking)) =
             self.tracked.get(&id).map(|tracked| {
                 (
                     tracked.mode,
@@ -831,6 +938,7 @@ impl Engine {
                     tracked.detector.clone(),
                     tracked.geometry_locked,
                     tracked.locked_geometry,
+                    tracked.peek_restore.is_some(),
                 )
             })
         else {
@@ -838,6 +946,12 @@ impl Engine {
         };
 
         if Instant::now() <= suppress_geometry_until {
+            return Vec::new();
+        }
+
+        // Peek is intentionally transient. Layout changes while peeking must never overwrite
+        // remembered PiP geometry or the manual window's base geometry.
+        if peeking {
             return Vec::new();
         }
 
@@ -956,6 +1070,425 @@ impl Engine {
         }
     }
 
+    fn capture_origin(&self, window: &WindowInfo) -> OriginState {
+        let size = window.logical_size();
+        OriginState {
+            workspace_id: window.workspace_id,
+            was_floating: window.is_floating,
+            size: (size.0 > 0 && size.1 > 0).then_some(size),
+            geometry: if window.is_floating {
+                self.current_geometry(window.id)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn ensure_not_peeking(&self, id: u64) -> Result<(), EngineError> {
+        if self
+            .tracked
+            .get(&id)
+            .is_some_and(|tracked| tracked.peek_restore.is_some())
+        {
+            Err(EngineError::PeekActive(id))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn scratchpad_workspace(&self) -> Option<&WorkspaceInfo> {
+        self.workspaces.values().find(|workspace| {
+            workspace.name.as_deref() == Some(self.config.minimize.scratchpad_name.as_str())
+        })
+    }
+
+    fn scratchpad_has_foreign_windows(&self, workspace_id: u64, excluding: Option<u64>) -> bool {
+        self.windows.values().any(|window| {
+            window.workspace_id == Some(workspace_id)
+                && Some(window.id) != excluding
+                && !self
+                    .persistent
+                    .minimized
+                    .iter()
+                    .any(|entry| entry.window_id == window.id)
+        })
+    }
+
+    fn workspace_has_windows(&self, workspace_id: u64) -> bool {
+        self.windows
+            .values()
+            .any(|window| window.workspace_id == Some(workspace_id))
+    }
+
+    fn empty_workspace_for(&self, window: &WindowInfo) -> Option<&WorkspaceInfo> {
+        let origin_output = window
+            .workspace_id
+            .and_then(|id| self.workspaces.get(&id))
+            .and_then(|workspace| workspace.output.as_deref());
+
+        let origin_workspace = window.workspace_id;
+        self.workspaces
+            .values()
+            .filter(|workspace| {
+                Some(workspace.id) != origin_workspace
+                    && workspace.name.is_none()
+                    && !self.workspace_has_windows(workspace.id)
+            })
+            .find(|workspace| workspace.output.as_deref() == origin_output)
+            .or_else(|| {
+                self.workspaces.values().find(|workspace| {
+                    Some(workspace.id) != origin_workspace
+                        && workspace.name.is_none()
+                        && !self.workspace_has_windows(workspace.id)
+                })
+            })
+    }
+
+    fn scratchpad_cleanup_effect(&self, excluding: Option<u64>) -> Option<Effect> {
+        if !self.persistent.minimized.is_empty() {
+            return None;
+        }
+        let workspace = self.scratchpad_workspace()?;
+        if self.scratchpad_has_foreign_windows(workspace.id, excluding) {
+            return None;
+        }
+        Some(Effect::Action(CompositorAction::UnsetWorkspaceName {
+            name: self.config.minimize.scratchpad_name.clone(),
+        }))
+    }
+
+    pub fn minimize(&mut self, requested: Option<u64>) -> Result<MinimizeApplication, EngineError> {
+        if !self.config.minimize.enabled {
+            return Err(EngineError::MinimizeDisabled);
+        }
+        let id = self.resolve_window_id(requested)?;
+        if self.tracked.contains_key(&id) {
+            return Err(EngineError::ManagedWindowCannotMinimize(id));
+        }
+        if self
+            .persistent
+            .minimized
+            .iter()
+            .any(|entry| entry.window_id == id)
+        {
+            return Err(EngineError::AlreadyMinimized(id));
+        }
+
+        let window = self
+            .windows
+            .get(&id)
+            .cloned()
+            .ok_or(EngineError::WindowNotFound(id))?;
+
+        let mut effects = Vec::new();
+        let created_scratchpad_workspace = if let Some(scratchpad) = self.scratchpad_workspace() {
+            if self.scratchpad_has_foreign_windows(scratchpad.id, None) {
+                return Err(EngineError::ScratchpadBusy(
+                    self.config.minimize.scratchpad_name.clone(),
+                ));
+            }
+            if self.persistent.minimized.is_empty() {
+                return Err(EngineError::ScratchpadNameInUse(
+                    self.config.minimize.scratchpad_name.clone(),
+                ));
+            }
+            if window.workspace_id == Some(scratchpad.id) {
+                return Err(EngineError::AlreadyMinimized(id));
+            }
+            None
+        } else {
+            let workspace = self
+                .empty_workspace_for(&window)
+                .cloned()
+                .ok_or(EngineError::ScratchpadUnavailable)?;
+            effects.push(Effect::Action(CompositorAction::SetWorkspaceName {
+                workspace_id: workspace.id,
+                name: self.config.minimize.scratchpad_name.clone(),
+            }));
+            Some(workspace.id)
+        };
+
+        let origin = self.capture_origin(&window);
+        let state = MinimizedWindowState {
+            window_id: id,
+            title: window.title().to_owned(),
+            app_id: window.app_id().to_owned(),
+            origin_workspace_id: origin.workspace_id,
+            was_floating: origin.was_floating,
+            size: origin.size,
+            geometry: origin.geometry,
+        };
+
+        effects.push(Effect::Action(
+            CompositorAction::MoveWindowToWorkspaceName {
+                window_id: id,
+                workspace_name: self.config.minimize.scratchpad_name.clone(),
+                focus: false,
+            },
+        ));
+        Ok(MinimizeApplication {
+            window_id: id,
+            effects,
+            state,
+            was_focused: window.is_focused,
+            created_scratchpad_workspace,
+        })
+    }
+
+    fn restore_effects_for(
+        &self,
+        entry: &MinimizedWindowState,
+        restore_focus: bool,
+    ) -> Result<Vec<Effect>, EngineError> {
+        let id = entry.window_id;
+        let window = self
+            .windows
+            .get(&id)
+            .cloned()
+            .ok_or(EngineError::WindowNotFound(id))?;
+
+        let target_workspace = entry
+            .origin_workspace_id
+            .filter(|workspace_id| self.workspaces.contains_key(workspace_id))
+            .or(self.focused_workspace)
+            .ok_or(EngineError::ScratchpadUnavailable)?;
+
+        let mut effects = Vec::new();
+        if window.workspace_id != Some(target_workspace) {
+            effects.push(Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: id,
+                workspace_id: target_workspace,
+                focus: false,
+            }));
+        }
+
+        if entry.was_floating {
+            // Niri preserves floating geometry exactly across workspace moves. Replaying
+            // normalized geometry here is less accurate for CSD windows.
+            if !window.is_floating {
+                effects.push(Effect::Action(CompositorAction::MoveWindowToFloating {
+                    id,
+                }));
+            }
+        } else {
+            effects.push(Effect::Action(CompositorAction::MoveWindowToTiling { id }));
+            // Tiled height is not preserved by Niri across a workspace round-trip, so restore
+            // the original dimensions explicitly.
+            if let Some((width, height)) = entry.size {
+                effects.push(Effect::Action(CompositorAction::SetWindowWidth {
+                    id,
+                    change: SizeChange::SetFixed(width as i32),
+                }));
+                effects.push(Effect::Action(CompositorAction::SetWindowHeight {
+                    id,
+                    change: SizeChange::SetFixed(height as i32),
+                }));
+            }
+        }
+
+        if restore_focus && self.config.minimize.restore_focus {
+            effects.push(Effect::Action(CompositorAction::FocusWindow { id }));
+        }
+        Ok(effects)
+    }
+
+    pub fn restore_minimized(
+        &self,
+        requested: Option<u64>,
+    ) -> Result<RestoreApplication, EngineError> {
+        let entry = match requested {
+            Some(id) => self
+                .persistent
+                .minimized
+                .iter()
+                .find(|entry| entry.window_id == id)
+                .cloned()
+                .ok_or(EngineError::NotMinimized(id))?,
+            None => self
+                .persistent
+                .minimized
+                .last()
+                .cloned()
+                .ok_or(EngineError::NoMinimizedWindows)?,
+        };
+        let scratchpad = self
+            .scratchpad_workspace()
+            .ok_or(EngineError::ScratchpadUnavailable)?;
+        let cleanup_scratchpad = self.persistent.minimized.len() == 1
+            && !self.scratchpad_has_foreign_windows(scratchpad.id, None);
+
+        let mut effects = self.restore_effects_for(&entry, true)?;
+        if cleanup_scratchpad {
+            effects.push(Effect::Action(CompositorAction::UnsetWorkspaceName {
+                name: self.config.minimize.scratchpad_name.clone(),
+            }));
+        }
+
+        Ok(RestoreApplication {
+            effects,
+            states: vec![entry],
+            scratchpad_workspace_id: scratchpad.id,
+            cleanup_scratchpad,
+        })
+    }
+
+    pub fn restore_all_minimized(&self) -> Result<RestoreApplication, EngineError> {
+        if self.persistent.minimized.is_empty() {
+            return Err(EngineError::NoMinimizedWindows);
+        }
+        let scratchpad = self
+            .scratchpad_workspace()
+            .ok_or(EngineError::ScratchpadUnavailable)?;
+        let states = self.persistent.minimized.clone();
+        let last = states.last().map(|entry| entry.window_id);
+        let mut effects = Vec::new();
+
+        for entry in &states {
+            effects.extend(self.restore_effects_for(entry, Some(entry.window_id) == last)?);
+        }
+
+        let cleanup_scratchpad = !self.scratchpad_has_foreign_windows(scratchpad.id, None);
+        if cleanup_scratchpad {
+            effects.push(Effect::Action(CompositorAction::UnsetWorkspaceName {
+                name: self.config.minimize.scratchpad_name.clone(),
+            }));
+        }
+
+        Ok(RestoreApplication {
+            effects,
+            states,
+            scratchpad_workspace_id: scratchpad.id,
+            cleanup_scratchpad,
+        })
+    }
+
+    pub fn commit_minimize(&mut self, application: &MinimizeApplication) -> bool {
+        if !self.windows.contains_key(&application.window_id) {
+            return false;
+        }
+        if self
+            .persistent
+            .minimized
+            .iter()
+            .any(|entry| entry.window_id == application.window_id)
+        {
+            return true;
+        }
+
+        self.persistent.minimized.push(application.state.clone());
+        if let Some(workspace_id) = application.created_scratchpad_workspace {
+            if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+                workspace.name = Some(self.config.minimize.scratchpad_name.clone());
+            }
+        }
+        self.mark_persistent_dirty();
+        true
+    }
+
+    pub fn compensate_minimize(&self, application: &MinimizeApplication) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if let Some(workspace_id) = application
+            .state
+            .origin_workspace_id
+            .filter(|workspace_id| self.workspaces.contains_key(workspace_id))
+        {
+            effects.push(Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: application.window_id,
+                workspace_id,
+                focus: false,
+            }));
+        }
+        if application.was_focused {
+            effects.push(Effect::Action(CompositorAction::FocusWindow {
+                id: application.window_id,
+            }));
+        }
+        if application.created_scratchpad_workspace.is_some() {
+            effects.push(Effect::Action(CompositorAction::UnsetWorkspaceName {
+                name: self.config.minimize.scratchpad_name.clone(),
+            }));
+        }
+        effects
+    }
+
+    pub fn commit_restore(&mut self, application: &RestoreApplication) {
+        let restored: HashSet<u64> = application
+            .states
+            .iter()
+            .map(|entry| entry.window_id)
+            .collect();
+        let before = self.persistent.minimized.len();
+        self.persistent
+            .minimized
+            .retain(|entry| !restored.contains(&entry.window_id));
+
+        if application.cleanup_scratchpad {
+            if let Some(workspace) = self
+                .workspaces
+                .get_mut(&application.scratchpad_workspace_id)
+            {
+                if workspace.name.as_deref() == Some(self.config.minimize.scratchpad_name.as_str())
+                {
+                    workspace.name = None;
+                }
+            }
+        }
+        if self.persistent.minimized.len() != before {
+            self.mark_persistent_dirty();
+        }
+    }
+
+    pub fn compensate_restore(&self, application: &RestoreApplication) -> Vec<Effect> {
+        let mut effects = vec![Effect::Action(CompositorAction::SetWorkspaceName {
+            workspace_id: application.scratchpad_workspace_id,
+            name: self.config.minimize.scratchpad_name.clone(),
+        })];
+
+        for entry in &application.states {
+            effects.push(Effect::Action(
+                CompositorAction::MoveWindowToWorkspaceName {
+                    window_id: entry.window_id,
+                    workspace_name: self.config.minimize.scratchpad_name.clone(),
+                    focus: false,
+                },
+            ));
+            if entry.was_floating {
+                effects.push(Effect::Action(CompositorAction::MoveWindowToFloating {
+                    id: entry.window_id,
+                }));
+            } else {
+                effects.push(Effect::Action(CompositorAction::MoveWindowToTiling {
+                    id: entry.window_id,
+                }));
+                if let Some((width, height)) = entry.size {
+                    effects.push(Effect::Action(CompositorAction::SetWindowWidth {
+                        id: entry.window_id,
+                        change: SizeChange::SetFixed(width as i32),
+                    }));
+                    effects.push(Effect::Action(CompositorAction::SetWindowHeight {
+                        id: entry.window_id,
+                        change: SizeChange::SetFixed(height as i32),
+                    }));
+                }
+            }
+        }
+        effects
+    }
+
+    pub fn minimized_snapshots(&self) -> Vec<MinimizedWindowSnapshot> {
+        self.persistent
+            .minimized
+            .iter()
+            .map(|entry| MinimizedWindowSnapshot {
+                id: entry.window_id,
+                title: entry.title.clone(),
+                app_id: entry.app_id.clone(),
+                origin_workspace_id: entry.origin_workspace_id,
+                was_floating: entry.was_floating,
+            })
+            .collect()
+    }
+
     pub fn pin(&mut self, requested: Option<u64>) -> Result<Vec<Effect>, EngineError> {
         if !self.enabled {
             return Err(EngineError::Disabled);
@@ -970,6 +1503,8 @@ impl Engine {
         if self.tracked.contains_key(&id) {
             return Ok(Vec::new());
         }
+
+        let origin = self.capture_origin(&window);
         self.tracked.insert(
             id,
             TrackedWindow {
@@ -978,7 +1513,7 @@ impl Engine {
                 score: None,
                 follow_enabled: self.config.general.follow_workspace,
                 follow_mode: self.config.general.follow_mode,
-                original_was_floating: window.is_floating,
+                origin: Some(origin),
                 placement: self.config.pip.position,
                 managed_size: None,
                 pending_workspace: None,
@@ -986,6 +1521,7 @@ impl Engine {
                     + Duration::from_millis(self.config.general.action_suppression_ms),
                 geometry_locked: false,
                 locked_geometry: None,
+                peek_restore: None,
             },
         );
         let mut effects = Vec::new();
@@ -995,6 +1531,80 @@ impl Engine {
             }));
         }
         effects.extend(self.reconcile_workspace_follow_for(id));
+        Ok(effects)
+    }
+
+    pub fn overlay(
+        &mut self,
+        requested: Option<u64>,
+        profile: Option<&str>,
+    ) -> Result<Vec<Effect>, EngineError> {
+        if !self.enabled {
+            return Err(EngineError::Disabled);
+        }
+        let id = self.resolve_window_id(requested)?;
+        let window = self
+            .windows
+            .get(&id)
+            .cloned()
+            .ok_or(EngineError::WindowNotFound(id))?;
+        self.ignored_until_close.remove(&id);
+        let overlay = match profile {
+            Some(name) => self
+                .config
+                .profiles
+                .get(name)
+                .copied()
+                .ok_or_else(|| EngineError::UnknownProfile(name.to_owned()))?,
+            None => self.config.overlay,
+        };
+
+        if let Some(tracked) = self.tracked.get(&id) {
+            if tracked.mode == TrackedMode::AutoPip {
+                return Err(EngineError::AutoPipOverlayConflict(id));
+            }
+            self.ensure_not_peeking(id)?;
+        } else {
+            let origin = self.capture_origin(&window);
+            self.tracked.insert(
+                id,
+                TrackedWindow {
+                    mode: TrackedMode::ManualOverlay,
+                    detector: None,
+                    score: None,
+                    follow_enabled: overlay.follow_workspace,
+                    follow_mode: overlay.follow_mode,
+                    origin: Some(origin),
+                    placement: overlay.position,
+                    managed_size: Some((overlay.width, overlay.height)),
+                    pending_workspace: None,
+                    suppress_geometry_until: Instant::now()
+                        + Duration::from_millis(self.config.general.action_suppression_ms),
+                    geometry_locked: false,
+                    locked_geometry: None,
+                    peek_restore: None,
+                },
+            );
+        }
+
+        if let Some(tracked) = self.tracked.get_mut(&id) {
+            tracked.mode = TrackedMode::ManualOverlay;
+            tracked.follow_enabled = overlay.follow_workspace;
+            tracked.follow_mode = overlay.follow_mode;
+            tracked.placement = overlay.position;
+            tracked.managed_size = Some((overlay.width, overlay.height));
+            tracked.pending_workspace = None;
+        }
+
+        let mut effects = Vec::new();
+        if !window.is_floating {
+            effects.push(Effect::Action(CompositorAction::MoveWindowToFloating {
+                id,
+            }));
+        }
+        effects.extend(self.resize(Some(id), overlay.width, overlay.height)?);
+        effects.extend(self.reconcile_workspace_follow_for(id));
+        effects.extend(self.set_position(Some(id), overlay.position)?);
         Ok(effects)
     }
 
@@ -1021,16 +1631,193 @@ impl Engine {
         let tracked = self.tracked.remove(&id).ok_or(EngineError::NotPinned(id))?;
         if tracked.mode == TrackedMode::AutoPip {
             self.ignored_until_close.insert(id);
+            if let Some(restore) = tracked.peek_restore {
+                return Ok(vec![
+                    Effect::Action(CompositorAction::SetWindowWidth {
+                        id,
+                        change: SizeChange::SetFixed(restore.geometry.width as i32),
+                    }),
+                    Effect::Action(CompositorAction::SetWindowHeight {
+                        id,
+                        change: SizeChange::SetFixed(restore.geometry.height as i32),
+                    }),
+                    place_effect(
+                        id,
+                        PlacementPlan {
+                            x_percent: restore.geometry.x_percent,
+                            y_percent: restore.geometry.y_percent,
+                        },
+                    ),
+                ]);
+            }
+            return Ok(Vec::new());
         }
+        if !self.config.general.restore_layout_on_unpin || !tracked.mode.is_manual() {
+            return Ok(Vec::new());
+        }
+
+        let Some(window) = self.windows.get(&id).cloned() else {
+            return Ok(Vec::new());
+        };
+        let Some(origin) = tracked.origin else {
+            return Ok(Vec::new());
+        };
+
         let mut effects = Vec::new();
-        if tracked.mode == TrackedMode::ManualPin
-            && self.config.general.restore_layout_on_unpin
-            && !tracked.original_was_floating
-            && self.windows.contains_key(&id)
+        if let Some(workspace_id) = origin
+            .workspace_id
+            .filter(|workspace_id| self.workspaces.contains_key(workspace_id))
         {
+            if window.workspace_id != Some(workspace_id) {
+                effects.push(Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                    window_id: id,
+                    workspace_id,
+                    focus: false,
+                }));
+            }
+        }
+
+        if origin.was_floating {
+            if !window.is_floating {
+                effects.push(Effect::Action(CompositorAction::MoveWindowToFloating {
+                    id,
+                }));
+            }
+            if let Some(geometry) = origin.geometry {
+                effects.push(Effect::Action(CompositorAction::SetWindowWidth {
+                    id,
+                    change: SizeChange::SetFixed(geometry.width as i32),
+                }));
+                effects.push(Effect::Action(CompositorAction::SetWindowHeight {
+                    id,
+                    change: SizeChange::SetFixed(geometry.height as i32),
+                }));
+                effects.push(place_effect(
+                    id,
+                    PlacementPlan {
+                        x_percent: geometry.x_percent,
+                        y_percent: geometry.y_percent,
+                    },
+                ));
+            }
+        } else {
+            // Issue this unconditionally. The cached event state may still say "tiled" if an
+            // immediate unpin races the acknowledgement of our earlier MoveWindowToFloating.
             effects.push(Effect::Action(CompositorAction::MoveWindowToTiling { id }));
+            // Moving a resized overlay back to tiling keeps its floating dimensions in Niri.
+            // Restore the original tile/column size by ID as well. Exact column index is a
+            // separate property that Niri does not currently let us restore without focusing.
+            if let Some((width, height)) = origin.size {
+                effects.push(Effect::Action(CompositorAction::SetWindowWidth {
+                    id,
+                    change: SizeChange::SetFixed(width as i32),
+                }));
+                effects.push(Effect::Action(CompositorAction::SetWindowHeight {
+                    id,
+                    change: SizeChange::SetFixed(height as i32),
+                }));
+            }
         }
         Ok(effects)
+    }
+
+    pub fn set_peek(
+        &mut self,
+        requested: Option<u64>,
+        enabled: Option<bool>,
+    ) -> Result<Vec<Effect>, EngineError> {
+        let id = self.resolve_tracked_window_id(requested)?;
+        let is_peeking = self
+            .tracked
+            .get(&id)
+            .is_some_and(|tracked| tracked.peek_restore.is_some());
+        let should_enable = enabled.unwrap_or(!is_peeking);
+        if should_enable == is_peeking {
+            return Ok(Vec::new());
+        }
+
+        if should_enable {
+            let current_size = self
+                .windows
+                .get(&id)
+                .map(WindowInfo::logical_size)
+                .filter(|(width, height)| *width > 0 && *height > 0)
+                .unwrap_or_else(|| self.desired_size(id));
+            let restore_geometry = self
+                .current_geometry(id)
+                .or_else(|| self.geometry_from_plan(id, current_size))
+                .ok_or(EngineError::GeometryUnavailable(id))?;
+            let plan = self
+                .placement_plan(
+                    self.follow_target_for(id),
+                    (self.config.peek.width, self.config.peek.height),
+                    self.config.peek.position,
+                )
+                .ok_or(EngineError::GeometryUnavailable(id))?;
+            let previous_managed_size = self.tracked.get(&id).and_then(|t| t.managed_size);
+
+            if let Some(tracked) = self.tracked.get_mut(&id) {
+                tracked.peek_restore = Some(PeekRestore {
+                    geometry: restore_geometry,
+                    managed_size: previous_managed_size,
+                });
+                tracked.managed_size = Some((self.config.peek.width, self.config.peek.height));
+                tracked.suppress_geometry_until = Instant::now()
+                    + Duration::from_millis(self.config.general.action_suppression_ms);
+            }
+            if let Some(window) = self.windows.get_mut(&id) {
+                window.layout.window_size = (
+                    self.config.peek.width as i32,
+                    self.config.peek.height as i32,
+                );
+            }
+
+            Ok(vec![
+                Effect::Action(CompositorAction::SetWindowWidth {
+                    id,
+                    change: SizeChange::SetFixed(self.config.peek.width as i32),
+                }),
+                Effect::Action(CompositorAction::SetWindowHeight {
+                    id,
+                    change: SizeChange::SetFixed(self.config.peek.height as i32),
+                }),
+                place_effect(id, plan),
+            ])
+        } else {
+            let restore = self
+                .tracked
+                .get_mut(&id)
+                .and_then(|tracked| tracked.peek_restore.take())
+                .ok_or(EngineError::GeometryUnavailable(id))?;
+            if let Some(tracked) = self.tracked.get_mut(&id) {
+                tracked.managed_size = restore.managed_size;
+                tracked.suppress_geometry_until = Instant::now()
+                    + Duration::from_millis(self.config.general.action_suppression_ms);
+            }
+            if let Some(window) = self.windows.get_mut(&id) {
+                window.layout.window_size = (
+                    restore.geometry.width as i32,
+                    restore.geometry.height as i32,
+                );
+            }
+            Ok(vec![
+                Effect::Action(CompositorAction::SetWindowWidth {
+                    id,
+                    change: SizeChange::SetFixed(restore.geometry.width as i32),
+                }),
+                Effect::Action(CompositorAction::SetWindowHeight {
+                    id,
+                    change: SizeChange::SetFixed(restore.geometry.height as i32),
+                }),
+                place_effect(
+                    id,
+                    PlacementPlan {
+                        x_percent: restore.geometry.x_percent,
+                        y_percent: restore.geometry.y_percent,
+                    },
+                ),
+            ])
+        }
     }
 
     pub fn toggle(&mut self, requested: Option<u64>) -> Result<Vec<Effect>, EngineError> {
@@ -1052,6 +1839,7 @@ impl Engine {
             return Err(EngineError::InvalidSize(width, height));
         }
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         if !self.windows.contains_key(&id) {
             return Err(EngineError::WindowNotFound(id));
         }
@@ -1092,6 +1880,7 @@ impl Engine {
         percent: i32,
     ) -> Result<Vec<Effect>, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         let window = self
             .windows
             .get(&id)
@@ -1120,6 +1909,7 @@ impl Engine {
         placement: Placement,
     ) -> Result<Vec<Effect>, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         let size = self
             .windows
             .get(&id)
@@ -1181,6 +1971,7 @@ impl Engine {
         dy: i32,
     ) -> Result<Vec<Effect>, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         if dx == 0 && dy == 0 {
             return Ok(Vec::new());
         }
@@ -1289,6 +2080,7 @@ impl Engine {
         locked: bool,
     ) -> Result<Vec<Effect>, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         let detector = self.tracked.get(&id).and_then(|t| t.detector.clone());
         let geometry = if locked {
             let current_size = self
@@ -1318,8 +2110,18 @@ impl Engine {
         Ok(Vec::new())
     }
 
+    pub fn reset_learned_geometry(&mut self) {
+        self.persistent.profiles.clear();
+        for controls in self.persistent.controls.values_mut() {
+            controls.placement = self.config.pip.position;
+            controls.geometry_locked = false;
+        }
+        self.mark_persistent_dirty();
+    }
+
     pub fn reset_geometry(&mut self, requested: Option<u64>) -> Result<Vec<Effect>, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         let mode = self
             .tracked
             .get(&id)
@@ -1366,6 +2168,7 @@ impl Engine {
         preset: ControlPreset,
     ) -> Result<PresetApplication, EngineError> {
         let id = self.resolve_tracked_window_id(requested)?;
+        self.ensure_not_peeking(id)?;
         let target_is_auto_pip = self
             .tracked
             .get(&id)
@@ -1447,6 +2250,7 @@ impl Engine {
             enabled: self.enabled,
             tracked: self.tracked.len(),
             pinned: self.tracked.len(),
+            minimized: self.persistent.minimized.len(),
             focused_workspace: self.focused_workspace,
             opacity_override_percent: self.persistent.pip_opacity_percent,
             windows,
@@ -1466,11 +2270,14 @@ impl Engine {
                     mode: match tracked.mode {
                         TrackedMode::AutoPip => "auto-pip",
                         TrackedMode::ManualPin => "manual-pin",
+                        TrackedMode::ManualOverlay => "manual-overlay",
                     }
                     .into(),
                     detector: tracked.detector.clone(),
                     score: tracked.score,
                     workspace_id: window.workspace_id,
+                    origin_workspace_id: tracked.origin.and_then(|origin| origin.workspace_id),
+                    peeking: tracked.peek_restore.is_some(),
                     width,
                     height,
                     placement: tracked.placement,
@@ -1544,6 +2351,423 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    fn normal_window(id: u64, workspace: u64, floating: bool) -> WindowInfo {
+        WindowInfo {
+            id,
+            title: Some(format!("Window {id}")),
+            app_id: Some("org.example.App".into()),
+            workspace_id: Some(workspace),
+            is_focused: true,
+            is_floating: floating,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                tile_pos_in_workspace_view: floating.then_some((400.0, 200.0)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn scratchpad_workspaces() -> Vec<WorkspaceInfo> {
+        vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                active_window_id: None,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                active_window_id: Some(50),
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 3,
+                idx: 3,
+                output: Some("eDP-1".into()),
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn minimize_creates_scratchpad_and_restores_tiled_origin() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            50, 1, false,
+        )));
+
+        let minimize = engine.minimize(Some(50)).unwrap();
+        assert!(minimize.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWorkspaceName {
+                workspace_id: 2,
+                name
+            }) if name == "niri-pip:scratchpad"
+        )));
+        assert!(minimize.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToWorkspaceName {
+                window_id: 50,
+                workspace_name,
+                focus: false
+            }) if workspace_name == "niri-pip:scratchpad"
+        )));
+        assert!(engine.minimized_snapshots().is_empty());
+        engine.commit_minimize(&minimize);
+        assert_eq!(engine.minimized_snapshots().len(), 1);
+
+        engine.handle_event(CompositorEvent::WorkspacesChanged(scratchpad_workspaces()));
+        let mut parked = normal_window(50, 2, false);
+        parked.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(parked));
+
+        let restore = engine.restore_minimized(None).unwrap();
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: 50,
+                workspace_id: 1,
+                focus: false
+            })
+        )));
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToTiling { id: 50 })
+        )));
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 50,
+                change: SizeChange::SetFixed(900)
+            })
+        )));
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::FocusWindow { id: 50 })
+        )));
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::UnsetWorkspaceName { name })
+                if name == "niri-pip:scratchpad"
+        )));
+        assert_eq!(engine.minimized_snapshots().len(), 1);
+        engine.commit_restore(&restore);
+        assert!(engine.minimized_snapshots().is_empty());
+    }
+
+    #[test]
+    fn minimize_restores_floating_geometry() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            51, 1, true,
+        )));
+        let minimize = engine.minimize(Some(51)).unwrap();
+        engine.commit_minimize(&minimize);
+
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                active_window_id: Some(51),
+                ..Default::default()
+            },
+        ]));
+        let mut parked = normal_window(51, 2, true);
+        parked.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(parked));
+
+        let restore = engine.restore_minimized(Some(51)).unwrap();
+        assert!(
+            !restore.effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Action(CompositorAction::MoveWindowToFloating { id: 51 })
+                    | Effect::Action(CompositorAction::SetWindowWidth { id: 51, .. })
+                    | Effect::Action(CompositorAction::SetWindowHeight { id: 51, .. })
+                    | Effect::Action(CompositorAction::MoveFloatingWindow { id: 51, .. })
+            )),
+            "an already-floating window should rely on Niri's exact floating-layout memory"
+        );
+    }
+
+    #[test]
+    fn minimized_stack_survives_engine_restart_and_restores_last_first() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            60, 1, false,
+        )));
+        let first_minimize = engine.minimize(Some(60)).unwrap();
+        engine.commit_minimize(&first_minimize);
+
+        engine.handle_event(CompositorEvent::WorkspacesChanged(scratchpad_workspaces()));
+        let mut parked = normal_window(60, 2, false);
+        parked.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(parked));
+
+        let mut second = normal_window(61, 1, false);
+        second.is_focused = true;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(second));
+        let second_minimize = engine.minimize(Some(61)).unwrap();
+        engine.commit_minimize(&second_minimize);
+
+        let persisted = engine.take_persistent_if_dirty().unwrap();
+        let mut restarted = Engine::new(Config::default(), persisted).unwrap();
+        restarted.handle_event(CompositorEvent::OutputsChanged(HashMap::from([(
+            "eDP-1".into(),
+            OutputInfo {
+                name: "eDP-1".into(),
+                logical: Some(LogicalOutput {
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    scale: 1.0,
+                }),
+            },
+        )])));
+        restarted.handle_event(CompositorEvent::WorkspacesChanged(scratchpad_workspaces()));
+        let mut w60 = normal_window(60, 2, false);
+        w60.is_focused = false;
+        let mut w61 = normal_window(61, 2, false);
+        w61.is_focused = false;
+        restarted.handle_event(CompositorEvent::WindowsChanged(vec![w60, w61]));
+
+        assert_eq!(restarted.minimized_snapshots().len(), 2);
+        let restore = restarted.restore_minimized(None).unwrap();
+        assert!(restore.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: 61,
+                workspace_id: 1,
+                ..
+            })
+        )));
+        assert_eq!(restarted.minimized_snapshots().len(), 2);
+        restarted.commit_restore(&restore);
+        assert_eq!(restarted.minimized_snapshots().len(), 1);
+        assert_eq!(restarted.minimized_snapshots()[0].id, 60);
+    }
+
+    #[test]
+    fn restore_all_plans_every_window_and_cleans_up_once() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            80, 1, false,
+        )));
+        let first = engine.minimize(Some(80)).unwrap();
+        engine.commit_minimize(&first);
+
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                active_window_id: Some(80),
+                ..Default::default()
+            },
+        ]));
+        let mut first_parked = normal_window(80, 2, false);
+        first_parked.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(first_parked));
+
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            81, 1, false,
+        )));
+        let second = engine.minimize(Some(81)).unwrap();
+        engine.commit_minimize(&second);
+        let mut second_parked = normal_window(81, 2, false);
+        second_parked.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(second_parked));
+
+        let restore = engine.restore_all_minimized().unwrap();
+        assert_eq!(
+            restore
+                .effects
+                .iter()
+                .filter(|effect| matches!(
+                    effect,
+                    Effect::Action(CompositorAction::MoveWindowToWorkspace { .. })
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            restore
+                .effects
+                .iter()
+                .filter(|effect| matches!(
+                    effect,
+                    Effect::Action(CompositorAction::FocusWindow { .. })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            restore
+                .effects
+                .iter()
+                .filter(|effect| matches!(
+                    effect,
+                    Effect::Action(CompositorAction::UnsetWorkspaceName { .. })
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(engine.minimized_snapshots().len(), 2);
+        engine.commit_restore(&restore);
+        assert!(engine.minimized_snapshots().is_empty());
+        assert!(engine.scratchpad_workspace().is_none());
+    }
+
+    #[test]
+    fn minimize_never_reuses_a_workspace_that_contains_a_window() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                output: Some("eDP-1".into()),
+                active_window_id: None,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 3,
+                idx: 3,
+                output: Some("eDP-1".into()),
+                ..Default::default()
+            },
+        ]));
+
+        let mut foreign = normal_window(90, 2, false);
+        foreign.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(foreign));
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            91, 1, false,
+        )));
+
+        let application = engine.minimize(Some(91)).unwrap();
+        assert!(application.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWorkspaceName {
+                workspace_id: 3,
+                ..
+            })
+        )));
+        assert!(!application.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWorkspaceName {
+                workspace_id: 2,
+                ..
+            })
+        )));
+    }
+
+    #[test]
+    fn minimize_rejects_unowned_empty_scratchpad_name() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                ..Default::default()
+            },
+        ]));
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            71, 1, false,
+        )));
+
+        assert!(matches!(
+            engine.minimize(Some(71)),
+            Err(EngineError::ScratchpadNameInUse(_))
+        ));
+    }
+
+    #[test]
+    fn minimize_rejects_busy_scratchpad_and_managed_windows() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                active_window_id: Some(70),
+                ..Default::default()
+            },
+        ]));
+        let mut foreign = normal_window(70, 2, false);
+        foreign.is_focused = false;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(foreign));
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(normal_window(
+            71, 1, false,
+        )));
+
+        assert!(matches!(
+            engine.minimize(Some(71)),
+            Err(EngineError::ScratchpadBusy(_))
+        ));
+
+        let mut pip_window = pip(72, 1);
+        pip_window.is_focused = true;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip_window));
+        assert!(matches!(
+            engine.minimize(Some(72)),
+            Err(EngineError::ManagedWindowCannotMinimize(72))
+        ));
     }
 
     #[test]
@@ -1700,6 +2924,28 @@ mod tests {
     }
 
     #[test]
+    fn reset_learned_geometry_clears_saved_size_and_position() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip(42, 1)));
+        engine.resize(Some(42), 1131, 636).unwrap();
+        engine.set_position(Some(42), Placement::TopLeft).unwrap();
+
+        assert!(!engine.persistent.profiles.is_empty());
+        assert_eq!(
+            engine.persistent.controls["chromium-empty-app-id"].placement,
+            Placement::TopLeft
+        );
+
+        engine.reset_learned_geometry();
+
+        assert!(engine.persistent.profiles.is_empty());
+        assert_eq!(
+            engine.persistent.controls["chromium-empty-app-id"].placement,
+            engine.config.pip.position
+        );
+    }
+
+    #[test]
     fn relative_scale_uses_the_current_free_form_size() {
         let mut engine = engine();
         engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip(42, 1)));
@@ -1792,6 +3038,254 @@ mod tests {
             effect,
             Effect::Action(CompositorAction::MoveWindowToTiling { id: 7 })
         )));
+        assert!(unpin.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 7,
+                change: SizeChange::SetFixed(900)
+            })
+        )));
+        assert!(unpin.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowHeight {
+                id: 7,
+                change: SizeChange::SetFixed(700)
+            })
+        )));
+    }
+
+    #[test]
+    fn manual_pin_restores_origin_workspace_after_follow() {
+        let mut engine = engine();
+        let mut kitty = WindowInfo {
+            id: 7,
+            title: Some("shell".into()),
+            app_id: Some("kitty".into()),
+            workspace_id: Some(1),
+            is_focused: true,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(kitty.clone()));
+        engine.pin(Some(7)).unwrap();
+
+        engine.handle_event(CompositorEvent::WorkspaceActivated {
+            id: 2,
+            focused: true,
+        });
+        let follow = engine.reconcile_workspace_follow();
+        assert!(follow.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: 7,
+                workspace_id: 2,
+                focus: false
+            })
+        )));
+
+        kitty.workspace_id = Some(2);
+        kitty.is_floating = true;
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(kitty));
+        let unpin = engine.unpin(Some(7)).unwrap();
+        assert!(unpin.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToWorkspace {
+                window_id: 7,
+                workspace_id: 1,
+                focus: false
+            })
+        )));
+        assert!(unpin.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToTiling { id: 7 })
+        )));
+    }
+
+    #[test]
+    fn overlay_restores_original_floating_geometry() {
+        let mut engine = engine();
+        let original = WindowInfo {
+            id: 7,
+            title: Some("monitor".into()),
+            app_id: Some("kitty".into()),
+            workspace_id: Some(1),
+            is_focused: true,
+            is_floating: true,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                tile_pos_in_workspace_view: Some((300.0, 200.0)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(original.clone()));
+        let effects = engine.overlay(Some(7), None).unwrap();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 7,
+                change: SizeChange::SetFixed(520)
+            })
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowHeight {
+                id: 7,
+                change: SizeChange::SetFixed(340)
+            })
+        )));
+        assert_eq!(engine.tracked_snapshots()[0].mode, "manual-overlay");
+
+        let mut changed = original;
+        changed.layout.window_size = (520, 340);
+        changed.layout.tile_size = (520.0, 340.0);
+        changed.layout.tile_pos_in_workspace_view = Some((1200.0, 650.0));
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(changed));
+
+        let restore = engine.unpin(Some(7)).unwrap();
+        assert!(restore.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 7,
+                change: SizeChange::SetFixed(900)
+            })
+        )));
+        assert!(restore.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowHeight {
+                id: 7,
+                change: SizeChange::SetFixed(700)
+            })
+        )));
+        assert!(restore.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveFloatingWindow { id: 7, .. })
+        )));
+        assert!(!restore.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::MoveWindowToTiling { id: 7 })
+        )));
+    }
+
+    #[test]
+    fn peek_is_transient_and_blocks_base_geometry_mutations() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip(42, 1)));
+        let persistent_before = engine.persistent.profiles.clone();
+
+        let enter = engine.set_peek(Some(42), Some(true)).unwrap();
+        assert!(enter.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 42,
+                change: SizeChange::SetFixed(960)
+            })
+        )));
+        assert!(engine.status_snapshot().windows[0].peeking);
+        assert!(matches!(
+            engine.resize(Some(42), 640, 360),
+            Err(EngineError::PeekActive(42))
+        ));
+
+        let leave = engine.set_peek(Some(42), Some(false)).unwrap();
+        assert!(leave.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 42,
+                change: SizeChange::SetFixed(500)
+            })
+        )));
+        assert!(!engine.status_snapshot().windows[0].peeking);
+        assert_eq!(engine.persistent.profiles, persistent_before);
+    }
+
+    #[test]
+    fn auto_pip_unpin_exits_temporary_peek_geometry() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip(42, 1)));
+        engine.set_peek(Some(42), Some(true)).unwrap();
+
+        let effects = engine.unpin(Some(42)).unwrap();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 42,
+                change: SizeChange::SetFixed(500)
+            })
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowHeight {
+                id: 42,
+                change: SizeChange::SetFixed(281)
+            })
+        )));
+        assert!(engine.tracked_snapshots().is_empty());
+    }
+
+    #[test]
+    fn named_overlay_profile_changes_size_and_position_policy() {
+        let mut engine = engine();
+        engine.config.profiles.insert(
+            "study".into(),
+            crate::OverlayConfig {
+                position: Placement::TopRight,
+                width: 700,
+                height: 420,
+                follow_workspace: true,
+                follow_mode: FollowMode::FollowWorkspace,
+            },
+        );
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(WindowInfo {
+            id: 7,
+            title: Some("notes".into()),
+            app_id: Some("kitty".into()),
+            workspace_id: Some(1),
+            is_focused: true,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                tile_pos_in_workspace_view: Some((200.0, 100.0)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+
+        let effects = engine.overlay(Some(7), Some("study")).unwrap();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowWidth {
+                id: 7,
+                change: SizeChange::SetFixed(700)
+            })
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Action(CompositorAction::SetWindowHeight {
+                id: 7,
+                change: SizeChange::SetFixed(420)
+            })
+        )));
+        assert_eq!(engine.tracked_snapshots()[0].placement, Placement::TopRight);
+        assert!(matches!(
+            engine.overlay(Some(7), Some("missing")),
+            Err(EngineError::UnknownProfile(name)) if name == "missing"
+        ));
+    }
+
+    #[test]
+    fn overlay_rejects_auto_managed_pip() {
+        let mut engine = engine();
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(pip(42, 1)));
+        assert!(matches!(
+            engine.overlay(Some(42), None),
+            Err(EngineError::AutoPipOverlayConflict(42))
+        ));
     }
 
     #[test]

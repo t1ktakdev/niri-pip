@@ -2,8 +2,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use niripip_core::{
     config_path, daemon_socket_path, runtime_kdl_path, Config, ControlPreset, DaemonRequest,
-    DaemonResponse, DaemonResult, FollowMode, Placement, ResponseData, StatusSnapshot,
-    TrackedWindowSnapshot, DAEMON_PROTOCOL_VERSION,
+    DaemonResponse, DaemonResult, FollowMode, MinimizedWindowSnapshot, Placement, ResponseData,
+    StatusSnapshot, TrackedWindowSnapshot, DAEMON_PROTOCOL_VERSION,
 };
 use niripip_ipc::{NiriBackend, RealNiriBackend};
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 #[command(
     name = "niripip",
     version,
-    about = "Sticky Picture-in-Picture and pinned-window controller for Niri"
+    about = "Picture-in-Picture, sticky-window and overlay controller for Niri"
 )]
 struct Cli {
     /// Print machine-readable JSON where supported.
@@ -29,18 +29,47 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Minimize a window into the niri-pip scratchpad (focused window by default).
+    Minimize {
+        #[arg(long)]
+        window_id: Option<u64>,
+    },
+    /// Restore a minimized window. Without --window-id, restores the most recent one.
+    RestoreMinimized {
+        #[arg(long)]
+        window_id: Option<u64>,
+    },
+    /// Restore every window currently in the niri-pip scratchpad.
+    RestoreAll,
+    /// List windows currently minimized by niri-pip.
+    Minimized,
     /// Pin a window (focused window by default).
     Pin {
         #[arg(long)]
         window_id: Option<u64>,
     },
-    /// Stop pinning a window.
+    /// Turn a window into a compact sticky overlay using [overlay] config.
+    Overlay {
+        /// Optional named profile from [profiles.NAME] in config.toml.
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        window_id: Option<u64>,
+    },
+    /// Stop pinning/overlay management and restore the original workspace/layout.
     Unpin {
         #[arg(long)]
         window_id: Option<u64>,
     },
     /// Toggle pinning for a window.
     Toggle {
+        #[arg(long)]
+        window_id: Option<u64>,
+    },
+    /// Temporarily enlarge a tracked window without changing remembered base geometry.
+    Peek {
+        #[arg(value_enum, default_value_t = PeekStateArg::Toggle)]
+        state: PeekStateArg,
         #[arg(long)]
         window_id: Option<u64>,
     },
@@ -116,6 +145,12 @@ enum Command {
         /// Optional playerctl player name, e.g. chromium.instance123.
         #[arg(long)]
         player: Option<String>,
+    },
+    /// Open the niri-pip settings application.
+    Ui {
+        /// Start the UI server without opening a browser window.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Open the iNiR/fuzzel compact controller menu.
     Menu,
@@ -194,6 +229,24 @@ impl OnOff {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+enum PeekStateArg {
+    On,
+    Off,
+    #[default]
+    Toggle,
+}
+
+impl PeekStateArg {
+    fn enabled(self) -> Option<bool> {
+        match self {
+            Self::On => Some(true),
+            Self::Off => Some(false),
+            Self::Toggle => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum PresetArg {
     Tiny,
@@ -256,8 +309,27 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Minimize { window_id } => print_response(
+            send_daemon(DaemonRequest::Minimize { window_id }).await?,
+            cli.json,
+        ),
+        Command::RestoreMinimized { window_id } => print_response(
+            send_daemon(DaemonRequest::RestoreMinimized { window_id }).await?,
+            cli.json,
+        ),
+        Command::RestoreAll => print_response(
+            send_daemon(DaemonRequest::RestoreAllMinimized).await?,
+            cli.json,
+        ),
+        Command::Minimized => {
+            print_response(send_daemon(DaemonRequest::ListMinimized).await?, cli.json)
+        }
         Command::Pin { window_id } => print_response(
             send_daemon(DaemonRequest::Pin { window_id }).await?,
+            cli.json,
+        ),
+        Command::Overlay { profile, window_id } => print_response(
+            send_daemon(DaemonRequest::Overlay { window_id, profile }).await?,
             cli.json,
         ),
         Command::Unpin { window_id } => print_response(
@@ -266,6 +338,14 @@ async fn run() -> Result<()> {
         ),
         Command::Toggle { window_id } => print_response(
             send_daemon(DaemonRequest::Toggle { window_id }).await?,
+            cli.json,
+        ),
+        Command::Peek { state, window_id } => print_response(
+            send_daemon(DaemonRequest::SetPeek {
+                window_id,
+                enabled: state.enabled(),
+            })
+            .await?,
             cli.json,
         ),
         Command::Size {
@@ -352,6 +432,7 @@ async fn run() -> Result<()> {
             cli.json,
         ),
         Command::Media { action, player } => media_command(action, player.as_deref())?,
+        Command::Ui { no_open } => launch_ui(no_open)?,
         Command::Menu => launch_menu()?,
         Command::List => print_response(send_daemon(DaemonRequest::List).await?, cli.json),
         Command::Status => print_response(send_daemon(DaemonRequest::Status).await?, cli.json),
@@ -444,6 +525,7 @@ fn print_response(response: DaemonResponse, json: bool) {
         DaemonResult::Ok { data } => match data {
             ResponseData::Message { message } => println!("{message}"),
             ResponseData::Windows { windows } => print_windows(&windows),
+            ResponseData::MinimizedWindows { windows } => print_minimized(&windows),
             ResponseData::Status(status) => print_status(&status),
         },
     }
@@ -475,6 +557,7 @@ fn print_status(status: &StatusSnapshot) {
     println!("Enabled       {}", status.enabled);
     println!("Tracked       {}", status.tracked);
     println!("Pinned        {}", status.pinned);
+    println!("Minimized     {}", status.minimized);
     println!(
         "PiP opacity   {}",
         status
@@ -488,6 +571,40 @@ fn print_status(status: &StatusSnapshot) {
     if !status.windows.is_empty() {
         println!("\nWINDOWS");
         print_windows(&status.windows);
+    }
+}
+
+fn print_minimized(windows: &[MinimizedWindowSnapshot]) {
+    if windows.is_empty() {
+        println!("No minimized windows.");
+        return;
+    }
+    for (index, window) in windows.iter().enumerate() {
+        let title = if window.title.is_empty() {
+            "<untitled>"
+        } else {
+            &window.title
+        };
+        println!(
+            "  {}. #{}  {}  origin={}  {}  app-id={}",
+            index + 1,
+            window.id,
+            title,
+            window
+                .origin_workspace_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".into()),
+            if window.was_floating {
+                "floating"
+            } else {
+                "tiled"
+            },
+            if window.app_id.is_empty() {
+                "<empty>"
+            } else {
+                &window.app_id
+            }
+        );
     }
 }
 
@@ -508,14 +625,19 @@ fn print_windows(windows: &[TrackedWindowSnapshot]) {
             window.width, window.height, window.placement, window.mode
         );
         println!(
-            "       workspace {}  follow={} ({:?})  lock={}  app-id={}{}",
+            "       workspace {}  origin={}  follow={} ({:?})  lock={}  peek={}  app-id={}{}",
             window
                 .workspace_id
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "?".into()),
+            window
+                .origin_workspace_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".into()),
             if window.follow_enabled { "on" } else { "off" },
             window.follow_mode,
             if window.geometry_locked { "on" } else { "off" },
+            if window.peeking { "on" } else { "off" },
             if window.app_id.is_empty() {
                 "<empty>"
             } else {
@@ -579,6 +701,35 @@ fn media_command(action: MediaAction, player: Option<&str>) -> Result<()> {
         .context("cannot run playerctl; install playerctl or use iNiR's audio package")?;
     if !status.success() {
         bail!("playerctl command failed (no controllable MPRIS player may be available)");
+    }
+    Ok(())
+}
+
+fn launch_ui(no_open: bool) -> Result<()> {
+    let current = std::env::current_exe().context("cannot resolve niripip executable path")?;
+    let sibling = current.with_file_name("niripip-ui");
+    let program = if sibling.is_file() {
+        sibling.into_os_string()
+    } else {
+        "niripip-ui".into()
+    };
+
+    let mut command = ProcessCommand::new(program);
+    if no_open {
+        command.arg("--no-open");
+    } else {
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    }
+
+    command.spawn().context(
+        "cannot launch niripip-ui; reinstall niri-pip so the full UI binary is installed",
+    )?;
+
+    if !no_open {
+        println!("niri-pip settings opened");
     }
     Ok(())
 }
@@ -869,5 +1020,9 @@ mod tests {
         assert!(Cli::try_parse_from(["niripip", "scale", "-10"]).is_ok());
         assert!(Cli::try_parse_from(["niripip", "nudge", "-20", "0"]).is_ok());
         assert!(Cli::try_parse_from(["niripip", "nudge", "0", "-50"]).is_ok());
+        assert!(Cli::try_parse_from(["niripip", "overlay"]).is_ok());
+        assert!(Cli::try_parse_from(["niripip", "peek"]).is_ok());
+        assert!(Cli::try_parse_from(["niripip", "peek", "on"]).is_ok());
+        assert!(Cli::try_parse_from(["niripip", "peek", "off"]).is_ok());
     }
 }

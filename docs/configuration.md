@@ -5,6 +5,15 @@ Runtime learned state is `${XDG_STATE_HOME:-~/.local/state}/niri-pip/state.json`
 PiP opacity is applied through `${XDG_CONFIG_HOME:-~/.config}/niri/niri-pip-runtime.kdl` when the
 marker-scoped include is installed.
 
+## Settings UI
+
+Run `niripip ui` to change the everyday settings without editing TOML by hand. The UI intentionally
+does not expose a window dashboard or width/height editor: move and resize the real PiP window in Niri
+and learned geometry is updated when `remember_geometry = true`.
+
+The settings app autosaves only the fields it owns and preserves unrelated manual TOML sections.
+Language is stored separately in `~/.config/niri-pip/ui-language` as `auto`, `ru` or `en`.
+
 ## Static config vs learned state
 
 Static TOML defines defaults and detector policy. Learned state stores user choices that should
@@ -44,6 +53,97 @@ niripip scale -10
 
 For an auto PiP, explicit runtime size is immediately written into the remembered detector geometry
 so a restart does not revert it.
+
+## Universal overlay and origin restore
+
+There are two manual-management entry points:
+
+```sh
+niripip pin
+niripip overlay
+```
+
+`pin` preserves the current size. `overlay` turns the selected window into a compact floating overlay using `[overlay]`:
+
+```toml
+[overlay]
+position = "bottom-right"
+width = 520
+height = 340
+follow_workspace = true
+follow_mode = "follow-workspace"
+```
+
+Before either manual mode starts, niri-pip captures the source workspace, floating/tiling mode and current size. For an already-floating window it also captures normalized position. `niripip unpin` returns the window to that source workspace and mode and restores the captured size; original floating position is restored when available.
+
+Niri currently has no ID-addressable action for restoring a tiled window to an exact column index. niri-pip therefore restores tiling without focus-juggling. It does not claim exact tiled-column restoration when the compositor cannot guarantee it.
+
+## Peek
+
+Peek is temporary geometry for any already-tracked PiP, pin or overlay:
+
+```toml
+[peek]
+position = "center"
+width = 960
+height = 540
+```
+
+```sh
+niripip peek
+niripip peek on
+niripip peek off
+```
+
+Entering peek captures the current base geometry, applies the peek geometry and marks the window as temporarily peeking. Leaving peek restores the captured geometry. Peek layout events are excluded from learned PiP state.
+
+While peek is active, commands that mutate base geometry (`size`, `scale`, `position`, `nudge`, `lock`, `unlock`, `reset`, `preset`) are rejected. Follow policy remains usable.
+
+## Minimize / scratchpad
+
+```toml
+[minimize]
+enabled = true
+scratchpad_name = "niri-pip:scratchpad"
+restore_focus = true
+```
+
+`niripip minimize` parks the focused ordinary window on a dynamically named empty workspace with `focus=false`. The scratchpad is created through Niri IPC only when needed; no permanent workspace entry is required in `config.kdl`.
+
+```sh
+niripip minimize
+niripip restore-minimized
+niripip restore-minimized --window-id 123
+niripip restore-all
+niripip minimized
+```
+
+The minimized stack is persisted in runtime state and survives a daemon restart within the same compositor session. The state records a Niri session key derived from the Linux boot ID and `NIRI_SOCKET`; a changed compositor/boot session discards old live window IDs before the engine starts. Stale entries within the same session are also pruned against Niri's authoritative window snapshot. Restore returns the original workspace and floating/tiling mode. Floating layout is left to Niri's exact per-workspace memory; tiled dimensions are replayed because Niri can lose tiled height across a workspace round-trip.
+
+Minimize/restore requests are transactional: runtime state is committed only after every planned Niri IPC action succeeds. If an IPC action fails after earlier actions already ran, niri-pip issues best-effort compositor compensation and leaves the persisted minimized stack unchanged.
+
+This feature is separate from application-native Wayland minimize. niri-pip cannot intercept a client's `set_minimized` request before Niri receives it.
+
+## Named overlay profiles
+
+Optional profiles reuse the same fields as `[overlay]`:
+
+```toml
+[profiles.study]
+position = "top-right"
+width = 700
+height = 420
+follow_workspace = true
+follow_mode = "follow-workspace"
+```
+
+Apply one to the selected window with:
+
+```sh
+niripip overlay --profile study
+```
+
+Unknown profile names fail without changing the window.
 
 ## Position
 

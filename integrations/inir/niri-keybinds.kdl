@@ -1,5 +1,7 @@
 binds {
-    Mod+Alt+P { spawn "niripip" "menu"; }
+    Mod+M { spawn "niripip" "minimize"; }
+    Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+    Mod+Alt+P { spawn "niripip" "ui"; }
     Mod+Alt+Equal { spawn "niripip" "scale" "10"; }
     Mod+Alt+Minus { spawn "niripip" "scale" "-10"; }
     Mod+Alt+O { spawn "niripip" "opacity" "100"; }

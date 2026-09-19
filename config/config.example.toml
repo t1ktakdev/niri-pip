@@ -1,4 +1,4 @@
-# niri-pip v0.2 configuration
+# niri-pip configuration
 # Copy to ~/.config/niri-pip/config.toml.
 
 [general]
@@ -30,6 +30,50 @@ gap = 18
 steal_focus = false
 # Keep the observed PiP aspect ratio while targeting roughly the profile area.
 preserve_aspect_ratio = true
+
+# Universal overlay defaults for arbitrary focused windows.
+[overlay]
+position = "bottom-right"
+width = 520
+height = 340
+follow_workspace = true
+follow_mode = "follow-workspace"
+
+# Temporary enlarged view. Peek never overwrites remembered/base geometry.
+[peek]
+position = "center"
+width = 960
+height = 540
+
+# Scratchpad-style minimize for ordinary windows. This is independent of application-native
+# Wayland minimize, which is not fully implemented by Niri 26.04.
+[minimize]
+enabled = true
+scratchpad_name = "niri-pip:scratchpad"
+restore_focus = true
+
+# Optional named overlay profiles. Use with:
+#   niripip overlay --profile study
+[profiles.study]
+position = "top-right"
+width = 700
+height = 420
+follow_workspace = true
+follow_mode = "follow-workspace"
+
+[profiles.call]
+position = "top-right"
+width = 420
+height = 420
+follow_workspace = true
+follow_mode = "follow-focused-output"
+
+[profiles.monitor]
+position = "bottom-left"
+width = 560
+height = 360
+follow_workspace = true
+follow_mode = "follow-workspace"
 
 # Safe insets used by the position approximation. Niri's move action is relative to its
 # working area, but the calculated working-area rectangle is not exposed by Niri IPC.

@@ -43,7 +43,7 @@ Do not mark niri-pip as failed because a normal floating PiP is covered by focus
 is a documented compositor stacking limitation. Maximized-to-working-area / normal windows are the
 supported normal-window scenario.
 
-## v0.2 controller smoke
+## v0.3 controller smoke
 
 With a real PiP open and tracked:
 
@@ -72,6 +72,18 @@ Verify a position preset and a nudge without focusing the PiP:
 niripip position bottom-right
 niripip nudge -20 -20
 ```
+
+Verify scratchpad minimize on an ordinary disposable test window:
+
+```sh
+niripip minimize
+niripip minimized
+niripip restore-minimized
+```
+
+For a two-window test, minimize both and verify `niripip restore-all` returns both windows and the
+temporary `niri-pip:scratchpad` workspace name disappears afterward. Restart `niripip.service`
+while at least one window is minimized and verify the stack is still reported.
 
 Verify the menu:
 
