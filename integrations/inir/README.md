@@ -32,7 +32,7 @@ niripip menu
 Suggested shortcuts:
 
 ```kdl
-Mod+M { spawn "niripip" "minimize"; }
-Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+Mod+Alt+M repeat=false { spawn "niripip" "hide"; }
+Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }
 Mod+Alt+P { spawn "niripip" "ui"; }
 ```

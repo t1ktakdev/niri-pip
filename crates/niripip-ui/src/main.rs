@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path as AxumPath, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post, put},
@@ -12,6 +12,7 @@ use niripip_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     fs::OpenOptions,
     io::{Read, Write},
@@ -75,6 +76,8 @@ struct Shortcut {
     name: &'static str,
     command: &'static str,
     suggested_bind: &'static str,
+    installed: bool,
+    conflict: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -145,6 +148,7 @@ async fn run() -> Result<()> {
         .route("/api/open-config", post(api_open_config))
         .route("/api/reset-geometry", post(api_reset_geometry))
         .route("/api/restore-minimized", post(api_restore_minimized))
+        .route("/api/restore-hidden/{id}", post(api_restore_hidden))
         .route(
             "/api/restore-all-minimized",
             post(api_restore_all_minimized),
@@ -371,6 +375,29 @@ async fn api_restore_minimized(State(state): State<AppState>, headers: HeaderMap
     touch(&state);
 
     match daemon_ok(DaemonRequest::RestoreMinimized { window_id: None }).await {
+        Ok(_) => match build_bootstrap().await {
+            Ok(data) => secured(Json(data).into_response(), "application/json"),
+            Err(err) => json_error(StatusCode::BAD_GATEWAY, &err.to_string()),
+        },
+        Err(err) => json_error(StatusCode::BAD_GATEWAY, &err.to_string()),
+    }
+}
+
+async fn api_restore_hidden(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<u64>,
+    headers: HeaderMap,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return json_error(StatusCode::UNAUTHORIZED, "invalid UI session");
+    }
+    touch(&state);
+
+    match daemon_ok(DaemonRequest::RestoreMinimized {
+        window_id: Some(id),
+    })
+    .await
+    {
         Ok(_) => match build_bootstrap().await {
             Ok(data) => secured(Json(data).into_response(), "application/json"),
             Err(err) => json_error(StatusCode::BAD_GATEWAY, &err.to_string()),
@@ -736,38 +763,129 @@ fn niri_integration_present() -> bool {
     .any(|text| text.contains("niri-pip-runtime.kdl"))
 }
 
+fn niri_config_root() -> PathBuf {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    config_home.join("niri/config.kdl")
+}
+
+fn include_target(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.starts_with("//") || line.starts_with("/-") || !line.starts_with("include ") {
+        return None;
+    }
+    let start = line.find('"')? + 1;
+    let end = line[start..].find('"')? + start;
+    Some(&line[start..end])
+}
+
+fn collect_active_niri_config(
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    lines: &mut Vec<String>,
+) {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical) {
+        return;
+    }
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    for line in text.lines() {
+        lines.push(line.to_owned());
+        if let Some(target) = include_target(line) {
+            let included = PathBuf::from(target);
+            let included = if included.is_absolute() {
+                included
+            } else {
+                parent.join(included)
+            };
+            collect_active_niri_config(&included, visited, lines);
+        }
+    }
+}
+
+fn normalize_shortcut_bind(bind: &str) -> String {
+    let mut parts: Vec<&str> = bind.split('+').filter(|part| !part.is_empty()).collect();
+    let Some(key) = parts.pop() else {
+        return bind.to_owned();
+    };
+    for part in &mut parts {
+        if *part == "Mod" {
+            *part = "Super";
+        }
+    }
+    let rank = |part: &str| match part {
+        "Super" => 0,
+        "Ctrl" => 1,
+        "Alt" => 2,
+        "Shift" => 3,
+        _ => 99,
+    };
+    parts.sort_by(|left, right| rank(left).cmp(&rank(right)).then_with(|| left.cmp(right)));
+    parts.push(key);
+    parts.join("+")
+}
+
+fn shortcut_status(bind: &str, commands: &[&str], lines: &[String]) -> (bool, bool) {
+    let wanted = normalize_shortcut_bind(bind);
+    let mut installed = false;
+    let mut conflict = false;
+
+    for raw in lines {
+        let line = raw.trim();
+        if line.starts_with("//") || line.starts_with("/-") {
+            continue;
+        }
+        let Some(token) = line.split_whitespace().next() else {
+            continue;
+        };
+        if normalize_shortcut_bind(token) != wanted {
+            continue;
+        }
+        let ours = line.contains("niripip")
+            && commands
+                .iter()
+                .any(|command| line.contains(&format!("\"{command}\"")));
+        if ours {
+            installed = true;
+        } else {
+            conflict = true;
+        }
+    }
+    (installed, conflict)
+}
+
 fn recommended_shortcuts() -> Vec<Shortcut> {
+    let mut lines = Vec::new();
+    collect_active_niri_config(&niri_config_root(), &mut HashSet::new(), &mut lines);
+
+    let make = |name, command, bind, accepted: &[&str]| {
+        let (installed, conflict) = shortcut_status(bind, accepted, &lines);
+        Shortcut {
+            name,
+            command,
+            suggested_bind: bind,
+            installed,
+            conflict,
+        }
+    };
+
     vec![
-        Shortcut {
-            name: "settings",
-            command: "niripip ui",
-            suggested_bind: "Mod+Alt+P",
-        },
-        Shortcut {
-            name: "minimize",
-            command: "niripip minimize",
-            suggested_bind: "Mod+M",
-        },
-        Shortcut {
-            name: "restore-minimized",
-            command: "niripip restore-minimized",
-            suggested_bind: "Mod+Shift+M",
-        },
-        Shortcut {
-            name: "toggle",
-            command: "niripip toggle",
-            suggested_bind: "Mod+Alt+T",
-        },
-        Shortcut {
-            name: "peek",
-            command: "niripip peek",
-            suggested_bind: "Mod+Alt+Space",
-        },
-        Shortcut {
-            name: "restore",
-            command: "niripip unpin",
-            suggested_bind: "Mod+Alt+U",
-        },
+        make("settings", "niripip ui", "Mod+Alt+P", &["ui"]),
+        make("hide", "niripip hide", "Mod+Alt+M", &["hide", "minimize"]),
+        make(
+            "restore-hidden",
+            "niripip restore-hidden",
+            "Mod+Alt+Shift+M",
+            &["restore-hidden", "restore-minimized"],
+        ),
+        make("toggle", "niripip toggle", "Mod+Alt+T", &["toggle"]),
+        make("peek", "niripip peek", "Mod+Alt+Space", &["peek"]),
+        make("restore", "niripip unpin", "Mod+Alt+U", &["unpin"]),
     ]
 }
 
@@ -967,6 +1085,37 @@ mod tests {
             minimize_restore_focus: true,
             opacity_percent: 95,
         }
+    }
+
+    #[test]
+    fn shortcut_detection_normalizes_modifiers_and_detects_conflicts() {
+        let lines = vec![
+            "Super+Alt+M { maximize-window-to-edges; }".to_string(),
+            "Mod+Shift+Alt+M repeat=false { spawn \"/usr/bin/niripip\" \"restore-hidden\"; }"
+                .to_string(),
+        ];
+
+        assert_eq!(
+            shortcut_status("Mod+Alt+M", &["hide", "minimize"], &lines),
+            (false, true)
+        );
+        assert_eq!(
+            shortcut_status(
+                "Mod+Alt+Shift+M",
+                &["restore-hidden", "restore-minimized"],
+                &lines
+            ),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn include_target_ignores_comments_and_reads_optional_include() {
+        assert_eq!(
+            include_target(r#"include optional=true "config.d/90-user-extra.kdl""#),
+            Some("config.d/90-user-extra.kdl")
+        );
+        assert_eq!(include_target(r#"// include "ignored.kdl""#), None);
     }
 
     #[test]

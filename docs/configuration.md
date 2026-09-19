@@ -99,7 +99,7 @@ Entering peek captures the current base geometry, applies the peek geometry and 
 
 While peek is active, commands that mutate base geometry (`size`, `scale`, `position`, `nudge`, `lock`, `unlock`, `reset`, `preset`) are rejected. Follow policy remains usable.
 
-## Minimize / scratchpad
+## Hide / guarded scratchpad
 
 ```toml
 [minimize]
@@ -108,21 +108,21 @@ scratchpad_name = "niri-pip:scratchpad"
 restore_focus = true
 ```
 
-`niripip minimize` parks the focused ordinary window on a dynamically named empty workspace with `focus=false`. The scratchpad is created through Niri IPC only when needed; no permanent workspace entry is required in `config.kdl`.
+The config table keeps its historical `[minimize]` name for v0.3.0 compatibility, but the user-facing feature is **Hide**. `niripip hide` parks the focused ordinary window on a dynamically named guarded service workspace with `focus=false`. No permanent workspace entry is required in `config.kdl`.
 
 ```sh
-niripip minimize
-niripip restore-minimized
-niripip restore-minimized --window-id 123
-niripip restore-all
-niripip minimized
+niripip hide
+niripip restore-hidden
+niripip restore-hidden --window-id 123
+niripip restore-all-hidden
+niripip hidden
 ```
 
-The minimized stack is persisted in runtime state and survives a daemon restart within the same compositor session. The state records a Niri session key derived from the Linux boot ID and `NIRI_SOCKET`; a changed compositor/boot session discards old live window IDs before the engine starts. Stale entries within the same session are also pruned against Niri's authoritative window snapshot. Restore returns the original workspace and floating/tiling mode. Floating layout is left to Niri's exact per-workspace memory; tiled dimensions are replayed because Niri can lose tiled height across a workspace round-trip.
+The hidden stack is persisted in runtime state and survives a daemon restart within the same compositor session. The state records a Niri session key derived from the Linux boot ID and `NIRI_SOCKET`; a changed compositor/boot session discards old live window IDs before the engine starts. Stale entries within the same session are also pruned against Niri's authoritative window snapshot. Restore returns the original workspace and floating/tiling mode. Floating layout is left to Niri's exact per-workspace memory; tiled dimensions are replayed because Niri can lose tiled height across a workspace round-trip.
 
-Minimize/restore requests are transactional: runtime state is committed only after every planned Niri IPC action succeeds. If an IPC action fails after earlier actions already ran, niri-pip issues best-effort compositor compensation and leaves the persisted minimized stack unchanged.
+Hide/restore requests are transactional: runtime state is committed only after every planned Niri IPC action succeeds. If an IPC action fails after earlier actions already ran, niri-pip issues best-effort compositor compensation and leaves the persisted hidden stack unchanged. If the service workspace is focused while hidden windows exist, the daemon immediately focuses the previous normal workspace.
 
-This feature is separate from application-native Wayland minimize. niri-pip cannot intercept a client's `set_minimized` request before Niri receives it.
+This is not application-native Wayland minimize. Niri 26.04 does not expose a native hide/minimize IPC action, and niri-pip cannot intercept a client's `set_minimized` request before Niri receives it. The v0.3.0 minimize command names remain compatibility aliases.
 
 ## Named overlay profiles
 

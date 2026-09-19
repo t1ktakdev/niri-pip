@@ -4,6 +4,18 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-20
+
+### Fixed
+
+- Reframed scratchpad parking as **Hide / Hidden windows** instead of presenting it as native Wayland minimize.
+- Recommended shortcuts no longer collide with common Niri maximize/mute bindings: `Mod+Alt+M` hides and `Mod+Alt+Shift+M` restores.
+- The Niri integration installer now checks active config includes before adding Hide shortcuts and never overwrites an occupied binding.
+- Hidden scratchpad focus is guarded: if the service workspace is focused, niri-pip immediately returns to the previous normal workspace.
+- Settings now detects installed/free/conflicting shortcut bindings from the active Niri config.
+- Settings exposes the hidden-window list with per-window restore actions.
+- Added `hide`, `restore-hidden`, `restore-all-hidden` and `hidden` CLI names while keeping the v0.3.0 minimize names as compatibility aliases.
+
 ## [0.3.0] - 2026-09-19
 
 ### Added

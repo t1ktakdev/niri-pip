@@ -8,7 +8,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 
 for TARGET in "$NIRI_DIR/config.d/90-user-extra.kdl" "$NIRI_DIR/config.kdl"; do
   [[ -f "$TARGET" ]] || continue
-  if grep -qE 'niri-pip (runtime include|opacity override)' "$TARGET"; then
+  if grep -qE 'niri-pip (runtime include|opacity override|hide shortcuts)' "$TARGET"; then
     cp -a "$TARGET" "$TARGET.bak.niripip-remove.$STAMP"
   fi
   python - "$TARGET" <<'PY'
@@ -20,6 +20,7 @@ text = path.read_text()
 blocks = [
     ("// >>> niri-pip runtime include >>>", "// <<< niri-pip runtime include <<<"),
     ("// >>> niri-pip opacity override >>>", "// <<< niri-pip opacity override <<<"),
+    ("// >>> niri-pip hide shortcuts >>>", "// <<< niri-pip hide shortcuts <<<"),
 ]
 changed = False
 for start, end in blocks:

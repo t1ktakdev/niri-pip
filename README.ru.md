@@ -8,7 +8,7 @@
 
 Умный Picture-in-Picture, sticky-окна и компактные overlay-окна для Wayland-композитора Niri.
 
-`niri-pip` слушает поток событий Niri, автоматически находит браузерные PiP-окна, держит их плавающими, переносит за активным workspace без кражи фокуса, запоминает свободный ручной размер, умеет безопасно «сворачивать» обычные окна в scratchpad и даёт управление размером, положением, прозрачностью, follow-режимом, блокировкой геометрии и медиа-кнопками.
+`niri-pip` слушает поток событий Niri, автоматически находит браузерные PiP-окна, держит их плавающими, переносит за активным workspace без кражи фокуса, запоминает свободный ручной размер, умеет скрывать обычные окна в защищённый служебный workspace и даёт управление размером, положением, прозрачностью, follow-режимом, блокировкой геометрии и медиа-кнопками.
 
 ## Возможности
 
@@ -25,7 +25,7 @@
 - Временный `peek`: увеличить tracked-окно и затем точно вернуть базовую геометрию.
 - Восстановление origin: ручное окно возвращается на исходный workspace и в исходный floating/tiling режим; для исходно floating окна восстанавливается прежняя геометрия.
 - Именованные overlay-профили для учёбы, звонков, мониторинга и других сценариев.
-- Scratchpad-минимизация `minimize` / `restore-minimized` / `restore-all` для обычных окон с восстановлением workspace/layout и сохранением списка через рестарт daemon.
+- `hide` / `restore-hidden` / `restore-all-hidden` для обычных окон: приложение продолжает работать, пока окно припарковано в защищённом служебном workspace; workspace/layout восстанавливаются после возврата.
 - Опциональное управление MPRIS через `playerctl`.
 - Компактный контроллер через fuzzel с fallback на rofi/gum.
 - Человеческий Settings UI с автоматическим/русским/английским языком и автосохранением.
@@ -34,7 +34,7 @@
 
 ## Проверенная среда
 
-v0.3.0 прошла полный release-preflight на Arch Linux с Niri 26.04 и Rust 1.97.1: clippy с запретом warnings, весь набор тестов, release build, реальная установка, `doctor` и live-проверка Settings UI в браузере. Во время финального smoke не было открытого auto-PiP, поэтому эта одна разрушающая live-ветка была честно пропущена; точная матрица приведена ниже.
+v0.3.1 прошла полный release-preflight на Arch Linux с Niri 26.04 и Rust 1.97.1: 77 тестов workspace, clippy с запретом warnings, locked release build, проверка installer/rollback, `niri validate`, `doctor`, live Hide/guard/restore и live восстановление конкретного скрытого окна через Settings. Точная матрица приведена ниже.
 
 Подробно: [VERIFICATION.md](VERIFICATION.md).
 
@@ -117,7 +117,7 @@ niripip ui
 - восстановление исходного состояния после unpin;
 - защита от перехвата фокуса и сохранение пропорций;
 - прозрачность PiP по умолчанию;
-- настройка scratchpad-minimize, focus после restore, счётчик свернутых окон и кнопки восстановления;
+- настройка Hide, focus после Restore, список/счётчик скрытых окон и восстановление конкретного/последнего/всех окон;
 - статус daemon, Niri IPC, iNiR и desktop entry;
 - безопасные готовые Niri bind'ы для копирования.
 
@@ -127,8 +127,8 @@ niripip ui
 
 ```kdl
 binds {
-    Mod+M { spawn "niripip" "minimize"; }
-    Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+    Mod+Alt+M repeat=false { spawn "niripip" "hide"; }
+    Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }
     Mod+Alt+P { spawn "niripip" "ui"; }
 }
 ```
@@ -144,11 +144,11 @@ niripip status
 niripip list
 niripip doctor
 
-niripip minimize
-niripip restore-minimized
-niripip restore-minimized --window-id 123
-niripip restore-all
-niripip minimized
+niripip hide
+niripip restore-hidden
+niripip restore-hidden --window-id 123
+niripip restore-all-hidden
+niripip hidden
 
 niripip size 1131 636
 niripip scale 10
@@ -201,13 +201,13 @@ niripip toggle
 
 Ручной resize остаётся главным. Пресеты — только быстрые варианты, а не ограничения.
 
-### Minimize / scratchpad
+### Hide / скрытые окна
 
-`niripip minimize` переносит текущее обычное окно в динамически созданный scratchpad-workspace и не уводит туда фокус. `niripip restore-minimized` возвращает последнее свернутое окно, `--window-id` — конкретное, а `restore-all` возвращает весь стек. Состояние свернутых окон сохраняется на диск и переживает рестарт `niripipd` внутри той же Niri-сессии. После рестарта Niri или ПК старые live-ID автоматически отбрасываются.
+`niripip hide` переносит текущее обычное окно в динамически именованный защищённый служебный workspace через `focus=false`. Приложение продолжает работать, но окно исчезает из обычной работы до `restore-hidden`, `restore-all-hidden` или кнопки восстановления в Settings. Если случайно сфокусировать служебный workspace, niri-pip сразу возвращает на предыдущий нормальный workspace.
 
-Это отдельная функция, а не перехват родной Wayland-кнопки «свернуть». В Niri 26.04 нет традиционной модели minimize/taskbar, и у части приложений native minimize может визуально подвешивать окно. `niri-pip` не может перехватить этот запрос до Niri, поэтому даёт предсказуемую compositor-side альтернативу через `Mod+M` / `Mod+Shift+M`.
+Это специально называется **Hide**, а не настоящий minimize. Niri 26.04 не предоставляет IPC-action для hidden/minimized window, а запрос клиента Wayland `set_minimized` идёт напрямую в Niri. Старые команды v0.3.0 `minimize`, `restore-minimized`, `restore-all` и `minimized` остаются совместимыми aliases.
 
-Для floating-окон используется собственная память Niri о позиции и размере между workspace — она возвращает геометрию точнее всего. Для tiled-окон niri-pip дополнительно восстанавливает сохранённые размеры, потому что Niri может потерять высоту при round-trip. Когда последнее управляемое свернутое окно возвращено или закрыто, имя scratchpad снимается автоматически.
+Метаданные скрытых окон переживают рестарт `niripipd` внутри той же Niri-сессии. После рестарта Niri или ПК старые live-ID автоматически отбрасываются. Floating-геометрию сохраняет сам Niri, tiled-размер восстанавливается явно. Когда последнее скрытое окно возвращено или закрыто, имя служебного workspace снимается автоматически.
 
 ### Sticky, overlay и peek
 
@@ -348,7 +348,7 @@ Uninstaller удаляет только собственный marker-блок �
 - Niri IPC не выдаёт отдельный готовый working-area rectangle, поэтому угловое позиционирование использует work-area-relative move и настраиваемые margins.
 - Niri IPC не даёт надёжный XWayland/native-флаг для каждого окна.
 - Сложные multi-monitor режимы `follow-focused-output` и `stay-on-output` лучше проверять на конкретной раскладке мониторов.
-- Родной minimize приложения — это взаимодействие клиента с Niri, его нельзя перехватить из niri-pip; на затронутых версиях используй scratchpad-команды/бинды.
+- Родной minimize приложения — это взаимодействие клиента с Niri, его нельзя перехватить из niri-pip; `hide` — безопасная эмуляция через защищённый служебный workspace, а не native minimize.
 - MPRIS зависит от браузера, сайта и медиаплеера.
 
 ## Разработка

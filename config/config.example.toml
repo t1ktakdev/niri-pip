@@ -45,8 +45,8 @@ position = "center"
 width = 960
 height = 540
 
-# Scratchpad-style minimize for ordinary windows. This is independent of application-native
-# Wayland minimize, which is not fully implemented by Niri 26.04.
+# Hide ordinary windows on a guarded service workspace while the app keeps running.
+# The table keeps its historical [minimize] name for v0.3.0 config compatibility.
 [minimize]
 enabled = true
 scratchpad_name = "niri-pip:scratchpad"

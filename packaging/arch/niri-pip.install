@@ -10,9 +10,9 @@ For each Niri user, run inside the Niri session:
 Open settings with:
   niripip ui
 
-Scratchpad minimize:
-  Mod+M          -> niripip minimize
-  Mod+Shift+M    -> niripip restore-minimized
+Hide / restore:
+  Mod+Alt+M          -> niripip hide
+  Mod+Alt+Shift+M    -> niripip restore-hidden
 
 Compact power-user controller:
   niripip menu

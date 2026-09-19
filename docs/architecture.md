@@ -276,7 +276,7 @@ Transport is one JSON request and one JSON response per Unix socket connection. 
 Commands:
 
 - status / list / list-minimized
-- minimize / restore-minimized / restore-all-minimized
+- hide / restore-hidden / restore-all-hidden at the CLI; protocol v4 retains minimize / restore-minimized / restore-all-minimized names for compatibility
 - pin / overlay / unpin / toggle
 - peek on/off/toggle
 - resize / scale / position / nudge
@@ -285,7 +285,7 @@ Commands:
 - opacity / preset
 - reload-config / set-enabled
 
-Protocol version 4 adds scratchpad minimize/restore commands, minimized-window snapshots and minimized count reporting. It retains the v3 overlay/profile, peek and origin-state controls.
+Protocol version 4 carries the guarded Hide/restore state machine under its original minimize/restore request names for wire compatibility, plus hidden-window snapshots/count reporting. It retains the v3 overlay/profile, peek and origin-state controls.
 
 No TCP listener and no shell-command execution exists.
 

@@ -208,6 +208,9 @@ fn parse_reply(line: &str) -> Result<Value, NiriIpcError> {
 pub fn action_request(action: CompositorAction) -> Value {
     let body = match action {
         CompositorAction::FocusWindow { id } => json!({"FocusWindow": {"id": id}}),
+        CompositorAction::FocusWorkspace { workspace_id } => {
+            json!({"FocusWorkspace": {"reference": {"Id": workspace_id}}})
+        }
         CompositorAction::MoveWindowToFloating { id } => {
             json!({"MoveWindowToFloating": {"id": id}})
         }
@@ -415,6 +418,14 @@ mod tests {
                 "reference":{"Id":7},
                 "focus":false
             }}})
+        );
+    }
+
+    #[test]
+    fn focus_workspace_uses_id_reference() {
+        assert_eq!(
+            action_request(CompositorAction::FocusWorkspace { workspace_id: 9 }),
+            json!({"Action":{"FocusWorkspace":{"reference":{"Id":9}}}})
         );
     }
 

@@ -29,20 +29,24 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Minimize a window into the niri-pip scratchpad (focused window by default).
-    Minimize {
+    /// Hide a window from normal workspace use while keeping the app running.
+    #[command(alias = "minimize")]
+    Hide {
         #[arg(long)]
         window_id: Option<u64>,
     },
-    /// Restore a minimized window. Without --window-id, restores the most recent one.
-    RestoreMinimized {
+    /// Restore a hidden window. Without --window-id, restores the most recent one.
+    #[command(alias = "restore-minimized")]
+    RestoreHidden {
         #[arg(long)]
         window_id: Option<u64>,
     },
-    /// Restore every window currently in the niri-pip scratchpad.
-    RestoreAll,
-    /// List windows currently minimized by niri-pip.
-    Minimized,
+    /// Restore every window currently hidden by niri-pip.
+    #[command(alias = "restore-all")]
+    RestoreAllHidden,
+    /// List windows currently hidden by niri-pip.
+    #[command(alias = "minimized")]
+    Hidden,
     /// Pin a window (focused window by default).
     Pin {
         #[arg(long)]
@@ -309,19 +313,19 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Minimize { window_id } => print_response(
+        Command::Hide { window_id } => print_response(
             send_daemon(DaemonRequest::Minimize { window_id }).await?,
             cli.json,
         ),
-        Command::RestoreMinimized { window_id } => print_response(
+        Command::RestoreHidden { window_id } => print_response(
             send_daemon(DaemonRequest::RestoreMinimized { window_id }).await?,
             cli.json,
         ),
-        Command::RestoreAll => print_response(
+        Command::RestoreAllHidden => print_response(
             send_daemon(DaemonRequest::RestoreAllMinimized).await?,
             cli.json,
         ),
-        Command::Minimized => {
+        Command::Hidden => {
             print_response(send_daemon(DaemonRequest::ListMinimized).await?, cli.json)
         }
         Command::Pin { window_id } => print_response(
@@ -557,7 +561,7 @@ fn print_status(status: &StatusSnapshot) {
     println!("Enabled       {}", status.enabled);
     println!("Tracked       {}", status.tracked);
     println!("Pinned        {}", status.pinned);
-    println!("Minimized     {}", status.minimized);
+    println!("Hidden        {}", status.minimized);
     println!(
         "PiP opacity   {}",
         status
@@ -576,7 +580,7 @@ fn print_status(status: &StatusSnapshot) {
 
 fn print_minimized(windows: &[MinimizedWindowSnapshot]) {
     if windows.is_empty() {
-        println!("No minimized windows.");
+        println!("No hidden windows.");
         return;
     }
     for (index, window) in windows.iter().enumerate() {
@@ -1013,6 +1017,42 @@ mod tests {
         assert_eq!(parse_opacity("auto").unwrap(), None);
         assert_eq!(parse_opacity("80%").unwrap(), Some(80));
         assert!(parse_opacity("5").is_err());
+    }
+
+    #[test]
+    fn clap_accepts_hide_commands_and_legacy_aliases() {
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "hide"]).unwrap().command,
+            Command::Hide { window_id: None }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "minimize"])
+                .unwrap()
+                .command,
+            Command::Hide { window_id: None }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "restore-hidden"])
+                .unwrap()
+                .command,
+            Command::RestoreHidden { window_id: None }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "restore-minimized"])
+                .unwrap()
+                .command,
+            Command::RestoreHidden { window_id: None }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "hidden"]).unwrap().command,
+            Command::Hidden
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["niripip", "minimized"])
+                .unwrap()
+                .command,
+            Command::Hidden
+        ));
     }
 
     #[test]

@@ -55,9 +55,9 @@ notify_error() {
 
 if [[ "$UI_LANG" == "ru" ]]; then
   PROMPT="PiP > "
-  MINIMIZE="Свернуть текущее окно"
-  RESTORE_MINIMIZED="Вернуть последнее свернутое"
-  RESTORE_ALL="Вернуть все свернутые"
+  MINIMIZE="Скрыть текущее окно"
+  RESTORE_MINIMIZED="Вернуть последнее скрытое"
+  RESTORE_ALL="Вернуть все скрытые"
   PIN="Закрепить текущее окно"
   OVERLAY="Сделать текущее окно overlay"
   PEEK="Peek: увеличить / вернуть"
@@ -91,9 +91,9 @@ if [[ "$UI_LANG" == "ru" ]]; then
   BAD_SIZE="Используй ШИРИНАxВЫСОТА, например 1131x636"
 else
   PROMPT="PiP > "
-  MINIMIZE="Minimize focused window"
-  RESTORE_MINIMIZED="Restore last minimized"
-  RESTORE_ALL="Restore all minimized"
+  MINIMIZE="Hide focused window"
+  RESTORE_MINIMIZED="Restore last hidden"
+  RESTORE_ALL="Restore all hidden"
   PIN="Pin focused window"
   OVERLAY="Make focused window an overlay"
   PEEK="Peek: enlarge / restore"
@@ -159,9 +159,9 @@ choice="$(main_menu || true)"
 [[ -n "$choice" ]] || exit 0
 
 case "$choice" in
-  "$MINIMIZE") "$NIRIPIP" minimize ;;
-  "$RESTORE_MINIMIZED") "$NIRIPIP" restore-minimized ;;
-  "$RESTORE_ALL") "$NIRIPIP" restore-all ;;
+  "$MINIMIZE") "$NIRIPIP" hide ;;
+  "$RESTORE_MINIMIZED") "$NIRIPIP" restore-hidden ;;
+  "$RESTORE_ALL") "$NIRIPIP" restore-all-hidden ;;
   "$PIN") "$NIRIPIP" pin ;;
   "$OVERLAY") "$NIRIPIP" overlay ;;
   "$PEEK") "$NIRIPIP" peek ;;

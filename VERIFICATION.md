@@ -1,5 +1,74 @@
 # Verification
 
+## v0.3.1 verification
+
+Date: 2026-09-20
+
+Environment:
+
+- Arch Linux
+- Niri 26.04 (`8ed0da4`)
+- Rust 1.97.1
+- user systemd session
+
+### Build and release gates
+
+The full release preflight completed successfully after the Hide hotfix work, including shell/TOML/desktop validation, documentation checks, package/version consistency, systemd verification, `cargo fmt --all --check`, clippy with warnings denied, the complete workspace test suite and a locked release build.
+
+Final test totals:
+
+- CLI: 5 passed;
+- core: 50 passed;
+- daemon: 5 passed;
+- IPC unit tests: 6 passed;
+- compositor-free acceptance: 3 passed;
+- mock backend: 1 passed;
+- settings UI backend: 7 passed.
+
+That is **77 passing tests** across the workspace. New regression coverage includes Hide CLI aliases, guarded service-workspace focus, exact Niri `FocusWorkspace` IPC encoding, shortcut conflict normalization and active-include parsing.
+
+The release preflight also contains a temporary-config regression for the Niri integration installer. It verifies that an existing `binds {}` block is reused rather than duplicated, installation is idempotent, existing user bindings survive install/remove, and Hide shortcut markers are removed cleanly.
+
+### Hide / restore live acceptance
+
+The installed v0.3.1 build was exercised against a real disposable tiled Alacritty window.
+
+Verified:
+
+- the window started on workspace 1 at exactly 922x1030;
+- `niripip hide` moved it to the dynamically named `niri-pip:scratchpad` workspace with no focus transfer;
+- the Alacritty process remained alive while hidden;
+- the focused normal workspace remained workspace 1;
+- deliberately focusing `niri-pip:scratchpad` caused the daemon guard to immediately return to workspace 1;
+- `niripip restore-hidden --window-id ...` returned the window to workspace 1 as tiled at exactly 922x1030;
+- the hidden stack returned to zero and the scratchpad workspace name disappeared;
+- the disposable window was closed and the user's previous focus was restored.
+
+This confirms the v0.3.1 behavior is a guarded Hide emulation: the application remains running while the window leaves normal workspace use. It is not represented as native Wayland minimize.
+
+### Settings and shortcut acceptance
+
+The real installed `niripip-ui --no-open` server was exercised while a disposable window was hidden.
+
+Verified:
+
+- Settings reported `Mod+Alt+M` / `niripip hide` as installed with no conflict;
+- Settings reported `Mod+Alt+Shift+M` / `niripip restore-hidden` as installed with no conflict;
+- the hidden window appeared in the Settings bootstrap list;
+- the per-window restore endpoint returned that specific window and reduced the hidden list to zero.
+
+The real user's Niri configuration was also checked after installation:
+
+- existing `Super+M` maximize remained unchanged;
+- existing `Mod+Shift+M` mute remained unchanged;
+- Hide and Restore were added under marker comments inside the existing user `binds {}` block;
+- `niri validate` passed;
+- `niripip doctor` reported 0 problems.
+
+### Installer rollback finding
+
+During live acceptance, the first v0.3.1 integration attempt exposed a duplicate-`binds` bug in the installer. Niri rejected the generated config and the installer correctly restored the timestamped backup automatically, leaving the user's config intact. The installer was then fixed to inject shortcut rows inside an existing `binds {}` block, and the corrected path passed temporary-config validation, idempotence/removal checks and the real Niri install described above.
+
 ## v0.3.0 verification
 
 Date: 2026-09-19

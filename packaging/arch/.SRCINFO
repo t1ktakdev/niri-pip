@@ -1,6 +1,6 @@
 pkgbase = niri-pip
 	pkgdesc = Picture-in-Picture companion, sticky windows and settings UI for Niri
-	pkgver = 0.3.0
+	pkgver = 0.3.1
 	pkgrel = 1
 	url = https://github.com/t1ktakdev/niri-pip
 	install = niri-pip.install
@@ -17,7 +17,7 @@ pkgbase = niri-pip
 	optdepends = fuzzel: controller menu
 	optdepends = rofi: controller menu fallback
 	optdepends = gum: controller menu fallback
-	source = git+https://github.com/t1ktakdev/niri-pip.git#tag=v0.3.0
+	source = git+https://github.com/t1ktakdev/niri-pip.git#tag=v0.3.1
 	sha256sums = SKIP
 
 pkgname = niri-pip

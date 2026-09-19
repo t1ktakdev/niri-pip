@@ -454,6 +454,47 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   font-size: 11px;
 }
 
+.hidden-window-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.hidden-window-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 48px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255,255,255,.015);
+}
+.hidden-window-copy {
+  min-width: 0;
+}
+.hidden-window-copy strong,
+.hidden-window-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hidden-window-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.hidden-window-copy span {
+  margin-top: 2px;
+  color: var(--muted);
+  font: 10px/1.35 var(--mono);
+}
+.hidden-window-row .button {
+  height: 30px;
+  padding-inline: 11px;
+  font-size: 10px;
+}
+
 .minimize-actions {
   display: flex;
   gap: 10px;
@@ -573,7 +614,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 }
 .shortcut-row {
   display: grid;
-  grid-template-columns: minmax(150px,.8fr) minmax(220px,1.25fr) auto auto;
+  grid-template-columns: minmax(140px,.75fr) minmax(190px,1.15fr) auto auto auto;
   gap: 12px;
   align-items: center;
   min-height: 69px;

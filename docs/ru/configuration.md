@@ -82,7 +82,7 @@ niripip peek off
 
 Перед входом сохраняется базовая геометрия; после выхода она восстанавливается. Peek-события не записываются как learned PiP geometry. Пока peek активен, команды изменения базового size/position, lock/reset/preset отклоняются; follow-policy менять можно.
 
-### `[minimize]`
+### Hide / `[minimize]`
 
 ```toml
 [minimize]
@@ -91,21 +91,21 @@ scratchpad_name = "niri-pip:scratchpad"
 restore_focus = true
 ```
 
-`niripip minimize` переносит текущее обычное окно на динамически именованный пустой workspace через Niri IPC с `focus=false`. Постоянно добавлять workspace в `config.kdl` не нужно.
+Имя таблицы `[minimize]` сохраняется для совместимости с v0.3.0, но пользовательская функция теперь называется **Hide**. `niripip hide` переносит текущее обычное окно на динамически именованный защищённый служебный workspace через Niri IPC с `focus=false`. Постоянно добавлять workspace в `config.kdl` не нужно.
 
 ```sh
-niripip minimize
-niripip restore-minimized
-niripip restore-minimized --window-id 123
-niripip restore-all
-niripip minimized
+niripip hide
+niripip restore-hidden
+niripip restore-hidden --window-id 123
+niripip restore-all-hidden
+niripip hidden
 ```
 
-Стек свернутых окон хранится в runtime state и переживает рестарт daemon внутри той же compositor-сессии. В state сохраняется ключ Niri-сессии из Linux boot ID и `NIRI_SOCKET`; при рестарте Niri или ПК старые live-ID удаляются до запуска engine. Stale-записи внутри текущей сессии дополнительно чистятся по authoritative snapshot Niri. Restore возвращает исходный workspace и floating/tiling режим. Floating-геометрию точнее всего сохраняет сам Niri, а tiled-размер niri-pip восстанавливает явно, потому что при round-trip Niri может потерять высоту.
+Стек скрытых окон хранится в runtime state и переживает рестарт daemon внутри той же compositor-сессии. В state сохраняется ключ Niri-сессии из Linux boot ID и `NIRI_SOCKET`; при рестарте Niri или ПК старые live-ID удаляются до запуска engine. Stale-записи внутри текущей сессии дополнительно чистятся по authoritative snapshot Niri. Restore возвращает исходный workspace и floating/tiling режим. Floating-геометрию точнее всего сохраняет сам Niri, а tiled-размер niri-pip восстанавливает явно.
 
-Операции transactional: persistent state коммитится только после успешного выполнения всех запланированных Niri IPC actions. При частичном сбое niri-pip выполняет best-effort компенсацию в compositor и не меняет сохранённый стек.
+Операции transactional: persistent state коммитится только после успешного выполнения всех запланированных Niri IPC actions. При частичном сбое niri-pip выполняет best-effort компенсацию и не меняет сохранённый стек. Если пользователь случайно фокусирует служебный workspace со скрытыми окнами, daemon сразу возвращает предыдущий нормальный workspace.
 
-Это не перехват родного Wayland minimize: запрос клиента `set_minimized` идёт напрямую в Niri.
+Это не родной Wayland minimize: Niri 26.04 не даёт native hide/minimize IPC-action, а запрос клиента `set_minimized` идёт напрямую в Niri. Старые команды v0.3.0 остаются aliases.
 
 ### `[profiles.NAME]`
 
