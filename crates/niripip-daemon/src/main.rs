@@ -30,10 +30,18 @@ async fn main() -> Result<()> {
     init_logging(&config.logging.level);
 
     let persistent_path = state_path();
-    let persistent = PersistentState::load(&persistent_path)
+    let mut persistent = PersistentState::load(&persistent_path)
         .with_context(|| format!("loading {}", persistent_path.display()))?;
-    // Persist the normalized schema immediately. This makes the v0.1 -> v0.2 migration
-    // durable even if the daemon is stopped before the first geometry/controller event.
+    let niri_session = current_niri_session_key()?;
+    let cleared_minimized = normalize_persistent_niri_session(&mut persistent, &niri_session);
+    if cleared_minimized > 0 {
+        info!(
+            cleared = cleared_minimized,
+            "discarded minimized window IDs from a previous Niri session"
+        );
+    }
+    // Persist the normalized schema/session immediately so migrations and stale-ID cleanup are
+    // durable even if the daemon stops before the first geometry/controller/minimize event.
     persistent
         .save_atomic(&persistent_path)
         .with_context(|| format!("normalizing {}", persistent_path.display()))?;
@@ -119,6 +127,29 @@ fn init_logging(level: &str) {
         .with_env_filter(filter)
         .compact()
         .init();
+}
+
+fn current_niri_session_key() -> Result<String> {
+    let socket = std::env::var_os("NIRI_SOCKET")
+        .ok_or_else(|| anyhow!("NIRI_SOCKET is not set; start niri-pip inside a Niri session"))?;
+    let boot_id =
+        fs::read_to_string("/proc/sys/kernel/random/boot_id").context("reading Linux boot ID")?;
+    Ok(format!(
+        "{}|{}",
+        boot_id.trim(),
+        PathBuf::from(socket).display()
+    ))
+}
+
+fn normalize_persistent_niri_session(state: &mut PersistentState, current: &str) -> usize {
+    if state.niri_session.as_deref() == Some(current) {
+        return 0;
+    }
+
+    let cleared = state.minimized.len();
+    state.minimized.clear();
+    state.niri_session = Some(current.to_owned());
+    cleared
 }
 
 fn load_config_or_default(path: &Path) -> Result<Config> {
@@ -242,11 +273,65 @@ async fn process_daemon_request(
                 let windows = engine.lock().await.tracked_snapshots();
                 Ok(ResponseData::Windows { windows })
             }
+            DaemonRequest::ListMinimized => {
+                let windows = engine.lock().await.minimized_snapshots();
+                Ok(ResponseData::MinimizedWindows { windows })
+            }
+            DaemonRequest::Minimize { window_id } => {
+                let application = engine.lock().await.minimize(window_id)?;
+                if let Err(err) = execute_effects(backend, application.effects.clone()).await {
+                    let compensation = engine.lock().await.compensate_minimize(&application);
+                    execute_effects_best_effort(backend, compensation).await;
+                    return Err(err);
+                }
+                if !engine.lock().await.commit_minimize(&application) {
+                    let compensation = engine.lock().await.compensate_minimize(&application);
+                    execute_effects_best_effort(backend, compensation).await;
+                    return Err(anyhow!(
+                        "window #{} closed before minimize state could be committed",
+                        application.window_id
+                    ));
+                }
+                Ok(ResponseData::Message {
+                    message: "window minimized to niri-pip scratchpad".into(),
+                })
+            }
+            DaemonRequest::RestoreMinimized { window_id } => {
+                let application = engine.lock().await.restore_minimized(window_id)?;
+                if let Err(err) = execute_effects(backend, application.effects.clone()).await {
+                    let compensation = engine.lock().await.compensate_restore(&application);
+                    execute_effects_best_effort(backend, compensation).await;
+                    return Err(err);
+                }
+                engine.lock().await.commit_restore(&application);
+                Ok(ResponseData::Message {
+                    message: "minimized window restored".into(),
+                })
+            }
+            DaemonRequest::RestoreAllMinimized => {
+                let application = engine.lock().await.restore_all_minimized()?;
+                if let Err(err) = execute_effects(backend, application.effects.clone()).await {
+                    let compensation = engine.lock().await.compensate_restore(&application);
+                    execute_effects_best_effort(backend, compensation).await;
+                    return Err(err);
+                }
+                engine.lock().await.commit_restore(&application);
+                Ok(ResponseData::Message {
+                    message: "all minimized windows restored".into(),
+                })
+            }
             DaemonRequest::Pin { window_id } => {
                 let effects = engine.lock().await.pin(window_id)?;
                 execute_effects(backend, effects).await?;
                 Ok(ResponseData::Message {
                     message: "window pinned".into(),
+                })
+            }
+            DaemonRequest::Overlay { window_id, profile } => {
+                let effects = engine.lock().await.overlay(window_id, profile.as_deref())?;
+                execute_effects(backend, effects).await?;
+                Ok(ResponseData::Message {
+                    message: "window converted to overlay".into(),
                 })
             }
             DaemonRequest::Unpin { window_id } => {
@@ -261,6 +346,17 @@ async fn process_daemon_request(
                 execute_effects(backend, effects).await?;
                 Ok(ResponseData::Message {
                     message: "window pin state toggled".into(),
+                })
+            }
+            DaemonRequest::SetPeek { window_id, enabled } => {
+                let effects = engine.lock().await.set_peek(window_id, enabled)?;
+                execute_effects(backend, effects).await?;
+                Ok(ResponseData::Message {
+                    message: match enabled {
+                        Some(true) => "peek enabled".into(),
+                        Some(false) => "peek disabled".into(),
+                        None => "peek toggled".into(),
+                    },
                 })
             }
             DaemonRequest::Resize {
@@ -331,6 +427,12 @@ async fn process_daemon_request(
                 execute_effects(backend, effects).await?;
                 Ok(ResponseData::Message {
                     message: "window controls reset to configured defaults".into(),
+                })
+            }
+            DaemonRequest::ResetLearnedGeometry => {
+                engine.lock().await.reset_learned_geometry();
+                Ok(ResponseData::Message {
+                    message: "remembered PiP geometry reset".into(),
                 })
             }
             DaemonRequest::SetOpacity { percent } => {
@@ -412,7 +514,7 @@ fn write_runtime_kdl(path: &Path, opacity_percent: Option<u8>) -> Result<()> {
                  }}\n"
             )
         }
-        None => "// Generated by niri-pip. Opacity mode: auto/inherit.\n".to_string(),
+        None => "// Generated by niri-pip. PiP opacity mode: auto/inherit.\n".to_string(),
     };
 
     let tmp = path.with_extension("kdl.tmp");
@@ -621,7 +723,52 @@ async fn persist_if_dirty(engine: &Arc<Mutex<Engine>>, path: &Path) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use niripip_core::{
+        CompositorAction, LogicalOutput, MinimizedWindowState, OutputInfo, WindowInfo,
+        WindowLayout, WorkspaceInfo,
+    };
+    use niripip_ipc::mock::MockNiriBackend;
+    use std::collections::HashMap;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn minimized_ids_are_scoped_to_the_niri_session() {
+        let mut state = PersistentState {
+            niri_session: Some("old-session".into()),
+            ..PersistentState::default()
+        };
+        state.minimized.push(MinimizedWindowState {
+            window_id: 42,
+            title: "old window".into(),
+            app_id: "org.example.App".into(),
+            origin_workspace_id: Some(1),
+            was_floating: false,
+            size: Some((800, 600)),
+            geometry: None,
+        });
+
+        assert_eq!(
+            normalize_persistent_niri_session(&mut state, "new-session"),
+            1
+        );
+        assert!(state.minimized.is_empty());
+        assert_eq!(state.niri_session.as_deref(), Some("new-session"));
+
+        state.minimized.push(MinimizedWindowState {
+            window_id: 43,
+            title: "same-session window".into(),
+            app_id: "org.example.App".into(),
+            origin_workspace_id: Some(1),
+            was_floating: true,
+            size: Some((640, 420)),
+            geometry: None,
+        });
+        assert_eq!(
+            normalize_persistent_niri_session(&mut state, "new-session"),
+            0
+        );
+        assert_eq!(state.minimized.len(), 1);
+    }
 
     #[test]
     fn parses_pid_scoped_niri_socket_name() {
@@ -643,9 +790,204 @@ mod tests {
         write_runtime_kdl(&path, Some(80)).expect("write fixed opacity");
         let fixed = fs::read_to_string(&path).expect("read fixed opacity");
         assert!(fixed.contains("opacity 0.80"));
+
         write_runtime_kdl(&path, None).expect("write auto opacity");
         let auto = fs::read_to_string(&path).expect("read auto opacity");
         assert!(!auto.contains("window-rule"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn transaction_test_engine() -> Engine {
+        let mut engine = Engine::new(Config::default(), PersistentState::default())
+            .expect("create transaction test engine");
+        engine.handle_event(CompositorEvent::OutputsChanged(HashMap::from([(
+            "eDP-1".into(),
+            OutputInfo {
+                name: "eDP-1".into(),
+                logical: Some(LogicalOutput {
+                    x: 0,
+                    y: 0,
+                    width: 1920,
+                    height: 1080,
+                    scale: 1.0,
+                }),
+            },
+        )])));
+        engine.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                active_window_id: Some(50),
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                output: Some("eDP-1".into()),
+                ..Default::default()
+            },
+        ]));
+        engine.handle_event(CompositorEvent::WindowOpenedOrChanged(WindowInfo {
+            id: 50,
+            title: Some("transaction-test".into()),
+            app_id: Some("Alacritty".into()),
+            workspace_id: Some(1),
+            is_focused: true,
+            is_floating: false,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        engine
+    }
+
+    fn transaction_test_paths(name: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("niripip-{name}-{nonce}"));
+        (
+            dir.clone(),
+            dir.join("config.toml"),
+            dir.join("state.json"),
+            dir.join("runtime.kdl"),
+        )
+    }
+
+    #[tokio::test]
+    async fn failed_minimize_does_not_commit_state_and_compensates() {
+        let engine = Arc::new(Mutex::new(transaction_test_engine()));
+        let backend = MockNiriBackend::default().fail_on_action(2);
+        let (dir, cfg, state, runtime) = transaction_test_paths("failed-minimize");
+
+        let response = process_daemon_request(
+            DaemonRequest::Minimize {
+                window_id: Some(50),
+            },
+            &engine,
+            &backend,
+            &cfg,
+            &state,
+            &runtime,
+        )
+        .await;
+
+        assert!(matches!(response.result, DaemonResult::Error { .. }));
+        assert!(engine.lock().await.minimized_snapshots().is_empty());
+
+        let actions = backend.actions();
+        assert!(matches!(
+            actions.first(),
+            Some(CompositorAction::SetWorkspaceName {
+                workspace_id: 2,
+                ..
+            })
+        ));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            CompositorAction::MoveWindowToWorkspace {
+                window_id: 50,
+                workspace_id: 1,
+                focus: false
+            }
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            CompositorAction::UnsetWorkspaceName { name }
+                if name == "niri-pip:scratchpad"
+        )));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn failed_restore_keeps_state_and_compensates_back_to_scratchpad() {
+        let mut prepared = transaction_test_engine();
+        let minimize = prepared.minimize(Some(50)).expect("prepare minimize");
+        prepared.commit_minimize(&minimize);
+        prepared.handle_event(CompositorEvent::WorkspacesChanged(vec![
+            WorkspaceInfo {
+                id: 1,
+                idx: 1,
+                output: Some("eDP-1".into()),
+                is_active: true,
+                is_focused: true,
+                ..Default::default()
+            },
+            WorkspaceInfo {
+                id: 2,
+                idx: 2,
+                name: Some("niri-pip:scratchpad".into()),
+                output: Some("eDP-1".into()),
+                active_window_id: Some(50),
+                ..Default::default()
+            },
+        ]));
+        prepared.handle_event(CompositorEvent::WindowOpenedOrChanged(WindowInfo {
+            id: 50,
+            title: Some("transaction-test".into()),
+            app_id: Some("Alacritty".into()),
+            workspace_id: Some(2),
+            is_focused: false,
+            is_floating: false,
+            layout: WindowLayout {
+                window_size: (900, 700),
+                tile_size: (900.0, 700.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+        let _ = prepared.take_persistent_if_dirty();
+
+        let engine = Arc::new(Mutex::new(prepared));
+        let backend = MockNiriBackend::default().fail_on_action(2);
+        let (dir, cfg, state, runtime) = transaction_test_paths("failed-restore");
+
+        let response = process_daemon_request(
+            DaemonRequest::RestoreMinimized {
+                window_id: Some(50),
+            },
+            &engine,
+            &backend,
+            &cfg,
+            &state,
+            &runtime,
+        )
+        .await;
+
+        assert!(matches!(response.result, DaemonResult::Error { .. }));
+        assert_eq!(engine.lock().await.minimized_snapshots().len(), 1);
+
+        let actions = backend.actions();
+        assert!(matches!(
+            actions.first(),
+            Some(CompositorAction::MoveWindowToWorkspace {
+                window_id: 50,
+                workspace_id: 1,
+                focus: false
+            })
+        ));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            CompositorAction::SetWorkspaceName {
+                workspace_id: 2,
+                name
+            } if name == "niri-pip:scratchpad"
+        )));
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            CompositorAction::MoveWindowToWorkspaceName {
+                window_id: 50,
+                workspace_name,
+                focus: false
+            } if workspace_name == "niri-pip:scratchpad"
+        )));
         let _ = fs::remove_dir_all(dir);
     }
 }

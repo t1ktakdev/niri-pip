@@ -1,6 +1,6 @@
 # Arch packaging
 
-The `PKGBUILD` uses the immutable release tag through a Git VCS source. `SKIP` is used only because makepkg does not checksum VCS sources; the source is pinned to `v0.2.1`.
+The `PKGBUILD` uses the immutable release tag through a Git VCS source. `SKIP` is used only because makepkg does not checksum VCS sources; the source is pinned to the exact `v${pkgver}` tag declared by the package.
 
 Build locally:
 

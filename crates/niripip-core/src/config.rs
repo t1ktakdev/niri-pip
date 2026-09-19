@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -25,6 +25,10 @@ pub enum ConfigError {
 pub struct Config {
     pub general: GeneralConfig,
     pub pip: PipConfig,
+    pub overlay: OverlayConfig,
+    pub peek: PeekConfig,
+    pub minimize: MinimizeConfig,
+    pub profiles: HashMap<String, OverlayConfig>,
     pub margins: Margins,
     pub browsers: BrowserConfig,
     pub detectors: Vec<DetectorConfig>,
@@ -57,6 +61,32 @@ pub struct PipConfig {
     pub steal_focus: bool,
     pub preserve_aspect_ratio: bool,
     pub profile: SizeProfile,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OverlayConfig {
+    pub position: Placement,
+    pub width: u32,
+    pub height: u32,
+    pub follow_workspace: bool,
+    pub follow_mode: FollowMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PeekConfig {
+    pub position: Placement,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MinimizeConfig {
+    pub enabled: bool,
+    pub scratchpad_name: String,
+    pub restore_focus: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -195,6 +225,38 @@ impl PipConfig {
     }
 }
 
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self {
+            position: Placement::BottomRight,
+            width: 520,
+            height: 340,
+            follow_workspace: true,
+            follow_mode: FollowMode::FollowWorkspace,
+        }
+    }
+}
+
+impl Default for PeekConfig {
+    fn default() -> Self {
+        Self {
+            position: Placement::Center,
+            width: 960,
+            height: 540,
+        }
+    }
+}
+
+impl Default for MinimizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            scratchpad_name: "niri-pip:scratchpad".to_string(),
+            restore_focus: true,
+        }
+    }
+}
+
 impl Default for Margins {
     fn default() -> Self {
         Self {
@@ -256,6 +318,10 @@ impl Default for Config {
         Self {
             general: GeneralConfig::default(),
             pip: PipConfig::default(),
+            overlay: OverlayConfig::default(),
+            peek: PeekConfig::default(),
+            minimize: MinimizeConfig::default(),
+            profiles: HashMap::new(),
             margins: Margins::default(),
             browsers: BrowserConfig::default(),
             detectors: default_detectors(),
@@ -348,6 +414,48 @@ impl Config {
         if w > i32::MAX as u32 || h > i32::MAX as u32 {
             return Err(ConfigError::Validation(
                 "PiP width/height must fit Niri IPC signed 32-bit size values".into(),
+            ));
+        }
+        for (name, width, height) in [
+            ("overlay", self.overlay.width, self.overlay.height),
+            ("peek", self.peek.width, self.peek.height),
+        ] {
+            if width < 120 || height < 68 {
+                return Err(ConfigError::Validation(format!(
+                    "{name} size is implausibly small (minimum 120x68)"
+                )));
+            }
+            if width > i32::MAX as u32 || height > i32::MAX as u32 {
+                return Err(ConfigError::Validation(format!(
+                    "{name} width/height must fit Niri IPC signed 32-bit size values"
+                )));
+            }
+        }
+        for (name, profile) in &self.profiles {
+            if name.trim().is_empty() {
+                return Err(ConfigError::Validation(
+                    "profile name must not be empty".into(),
+                ));
+            }
+            if profile.width < 120 || profile.height < 68 {
+                return Err(ConfigError::Validation(format!(
+                    "profile '{name}' size is implausibly small (minimum 120x68)"
+                )));
+            }
+            if profile.width > i32::MAX as u32 || profile.height > i32::MAX as u32 {
+                return Err(ConfigError::Validation(format!(
+                    "profile '{name}' width/height must fit Niri IPC signed 32-bit size values"
+                )));
+            }
+        }
+        if self.minimize.scratchpad_name.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "minimize.scratchpad_name must not be empty".into(),
+            ));
+        }
+        if self.minimize.scratchpad_name.chars().count() > 96 {
+            return Err(ConfigError::Validation(
+                "minimize.scratchpad_name must be at most 96 characters".into(),
             ));
         }
         if self.pip.steal_focus {
@@ -448,7 +556,44 @@ mod tests {
         let cfg = Config::from_toml("[general]\nenabled = true\n").unwrap();
         assert_eq!(cfg.pip.resolved_size(), (480, 270));
         assert!(cfg.general.auto_detect);
+        assert_eq!((cfg.overlay.width, cfg.overlay.height), (520, 340));
+        assert_eq!((cfg.peek.width, cfg.peek.height), (960, 540));
         assert!(!cfg.detectors.is_empty());
+    }
+
+    #[test]
+    fn parses_named_overlay_profile() {
+        let cfg = Config::from_toml(
+            r#"
+[profiles.study]
+position = "top-right"
+width = 700
+height = 420
+follow_workspace = true
+follow_mode = "follow-workspace"
+"#,
+        )
+        .unwrap();
+        let study = cfg.profiles["study"];
+        assert_eq!((study.width, study.height), (700, 420));
+        assert_eq!(study.position, Placement::TopRight);
+    }
+
+    #[test]
+    fn rejects_invalid_overlay_and_peek_sizes() {
+        let overlay = r#"
+[overlay]
+width = 100
+height = 80
+"#;
+        assert!(Config::from_toml(overlay).is_err());
+
+        let peek = r#"
+[peek]
+width = 960
+height = 40
+"#;
+        assert!(Config::from_toml(peek).is_err());
     }
 
     #[test]

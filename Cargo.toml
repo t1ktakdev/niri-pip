@@ -4,11 +4,12 @@ members = [
     "crates/niripip-ipc",
     "crates/niripip-daemon",
     "crates/niripip-cli",
+    "crates/niripip-ui",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.81"
@@ -16,6 +17,7 @@ repository = "https://github.com/t1ktakdev/niri-pip"
 
 [workspace.dependencies]
 anyhow = "1.0"
+axum = "0.8"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive"] }
 libc = "0.2"
@@ -25,6 +27,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 tokio = { version = "1.40", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "1.1"
+toml_edit = "=0.22.27"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 

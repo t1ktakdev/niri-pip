@@ -4,6 +4,32 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
+### Added
+
+- Universal `overlay` command for turning any manually selected Niri window into a compact sticky overlay.
+- Named `[profiles.NAME]` overlay profiles with size, position and follow policy.
+- Temporary `peek` mode with on/off/toggle control and exact base-geometry restore.
+- Origin snapshots for manually managed windows, including original workspace and floating geometry.
+- Overlay/pin/peek/unpin actions in the compact iNiR controller.
+- Local `niripip ui` settings application with Russian/English/automatic locale selection.
+- Settings for PiP detection, autostart, remembered geometry, workspace following, restore behavior, focus policy, aspect ratio and opacity.
+- Integration diagnostics for the daemon, Niri IPC, systemd autostart, iNiR runtime include and desktop launcher.
+- Safe global reset for learned PiP geometry and copyable recommended Niri keybinds.
+- Scratchpad-style minimize/restore for ordinary windows with persistent minimized state, restore-last/restore-all commands, transactional compositor actions and Settings UI controls.
+- Runtime compatibility notice for the Niri 26.04 native-minimize freeze behavior.
+- Niri-session scoping for persisted minimized window IDs so daemon restarts retain the stack without carrying stale IDs across compositor restarts or reboots.
+
+### Changed
+
+- `unpin` now restores the original workspace and floating/tiling mode for manually managed windows.
+- Geometry-changing controller commands reject mutations while temporary peek is active.
+- Tracked-window status reports origin workspace and peek state.
+- Daemon control protocol is version 4; persistent runtime state schema is version 3.
+- The application launcher and recommended `Mod+Alt+P` binding now open the settings UI; `niripip menu` remains available as the compact power-user controller.
+
+
 ## [0.2.1] - 2026-08-16
 
 ### Fixed

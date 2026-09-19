@@ -60,8 +60,19 @@ trap restore EXIT INT TERM
 "$NIRIPIP" doctor
 ok "doctor passed"
 
-[[ "$("$NIRIPIP" --version)" == *"0.2.1"* ]] || fail "expected niri-pip 0.2.1"
-ok "running v0.2.1"
+EXPECTED_VERSION="${NIRIPIP_EXPECTED_VERSION:-$(python - <<'PY'
+import tomllib
+print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])
+PY
+)}"
+[[ "$("$NIRIPIP" --version)" == *"$EXPECTED_VERSION"* ]] || fail "expected niri-pip $EXPECTED_VERSION"
+ok "running v$EXPECTED_VERSION"
+
+NIRIPIP_UI="${NIRIPIP_UI_BIN:-$HOME/.local/bin/niripip-ui}"
+[[ -x "$NIRIPIP_UI" ]] || NIRIPIP_UI="$(command -v niripip-ui || true)"
+[[ -n "$NIRIPIP_UI" && -x "$NIRIPIP_UI" ]] || fail "niripip-ui is not installed"
+"$NIRIPIP_UI" --help | grep -q 'Usage: niripip-ui'
+ok "settings UI binary installed"
 
 RUNTIME="${XDG_CONFIG_HOME:-$HOME/.config}/niri/niri-pip-runtime.kdl"
 [[ -f "$RUNTIME" ]] || fail "runtime KDL is missing: $RUNTIME"
@@ -73,8 +84,8 @@ ok "runtime include + Niri validation passed"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/niri-pip/state.json"
 [[ -f "$STATE" ]] || fail "state file is missing: $STATE"
 SCHEMA="$(jq -r '.schema_version // 0' "$STATE")"
-[[ "$SCHEMA" == "2" ]] || fail "expected state schema 2, got $SCHEMA"
-ok "state schema 2 is durable"
+[[ "$SCHEMA" == "3" ]] || fail "expected state schema 3, got $SCHEMA"
+ok "state schema 3 is durable"
 
 [[ -x "$HOME/.local/bin/niripip-menu" || -n "$(command -v niripip-menu || true)" ]] \
     || fail "niripip-menu is not installed"
@@ -193,4 +204,4 @@ else
 fi
 CONTROLLER_TOUCHED=false
 trap - EXIT INT TERM
-ok "live v0.2 controller smoke passed; original PiP size/settings restored"
+ok "live v${EXPECTED_VERSION} controller smoke passed; original PiP size/settings restored"

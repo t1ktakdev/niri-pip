@@ -35,6 +35,7 @@ rm -f "${SYSTEMD_DIR}/graphical-session.target.wants/niripip.service"
 rm -f \
     "${BIN_DIR}/niripip" \
     "${BIN_DIR}/niripipd" \
+    "${BIN_DIR}/niripip-ui" \
     "${BIN_DIR}/niripip-menu" \
     "${BIN_DIR}/niripip-integrate" \
     "${BIN_DIR}/niripip-unintegrate"

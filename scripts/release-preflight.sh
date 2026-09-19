@@ -31,7 +31,7 @@ from pathlib import Path
 
 p = Path('packaging/desktop/niri-pip.desktop.in')
 text = p.read_text()
-required = ['[Desktop Entry]', 'Type=Application', 'Name=niri-pip Controller', 'Exec=', 'Terminal=false']
+required = ['[Desktop Entry]', 'Type=Application', 'Name=niri-pip Settings', 'Exec="@NIRIPIP@" ui', 'Terminal=false']
 missing = [x for x in required if x not in text]
 if missing:
     raise SystemExit('desktop entry missing: ' + ', '.join(missing))
@@ -101,6 +101,26 @@ grep -q "pkgver=${VERSION}" packaging/arch/PKGBUILD || fail "PKGBUILD version mi
 grep -q "pkgver = ${VERSION}" packaging/arch/.SRCINFO || fail ".SRCINFO version mismatch"
 grep -q "## \[${VERSION}\]" CHANGELOG.md || fail "CHANGELOG version mismatch"
 ok "version consistency (${VERSION})"
+
+grep -q 'target/release/niripip-ui' packaging/arch/PKGBUILD \
+    || fail "Arch package does not install niripip-ui"
+grep -q 'target/release/niripip-ui' .github/workflows/release.yml \
+    || fail "release bundle does not include niripip-ui"
+grep -q 'UI_SOURCE' install.sh \
+    || fail "user installer does not install niripip-ui"
+grep -q 'niripip-ui' uninstall.sh \
+    || fail "uninstaller does not remove niripip-ui"
+grep -q 'Exec="@NIRIPIP@" ui' packaging/desktop/niri-pip.desktop.in \
+    || fail "desktop launcher does not open niripip ui"
+ok "settings UI packaging"
+
+grep -q '^\[minimize\]$' config/config.example.toml     || fail "example config is missing [minimize]"
+grep -q 'Mod+M { spawn "niripip" "minimize"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing Mod+M minimize"
+grep -q 'Mod+Shift+M { spawn "niripip" "restore-minimized"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing restore-minimized"
+grep -q 'pub const DAEMON_PROTOCOL_VERSION: u32 = 4;' crates/niripip-core/src/protocol.rs     || fail "daemon protocol is not v4"
+grep -q 'pub const STATE_SCHEMA_VERSION: u32 = 3;' crates/niripip-core/src/state.rs     || fail "persistent state schema is not v3"
+grep -q 'expected state schema 3' scripts/real-machine-smoke.sh     || fail "real-machine smoke is not checking schema 3"
+ok "minimize/protocol/state integration"
 
 if command -v systemd-analyze >/dev/null 2>&1; then
     tmp="$(mktemp -d)"

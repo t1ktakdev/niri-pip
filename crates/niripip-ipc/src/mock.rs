@@ -11,6 +11,8 @@ pub struct MockNiriBackend {
     outputs: HashMap<String, OutputInfo>,
     initial_events: Arc<Mutex<Vec<CompositorEvent>>>,
     actions: Arc<Mutex<Vec<CompositorAction>>>,
+    fail_on_action: Arc<Mutex<Option<usize>>>,
+    action_attempts: Arc<Mutex<usize>>,
 }
 
 impl Default for MockNiriBackend {
@@ -20,6 +22,8 @@ impl Default for MockNiriBackend {
             outputs: HashMap::new(),
             initial_events: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(Vec::new())),
+            fail_on_action: Arc::new(Mutex::new(None)),
+            action_attempts: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -32,6 +36,14 @@ impl MockNiriBackend {
 
     pub fn with_outputs(mut self, outputs: HashMap<String, OutputInfo>) -> Self {
         self.outputs = outputs;
+        self
+    }
+
+    pub fn fail_on_action(self, action_number: usize) -> Self {
+        *self
+            .fail_on_action
+            .lock()
+            .expect("mock failure mutex poisoned") = Some(action_number);
         self
     }
 
@@ -54,10 +66,29 @@ impl NiriBackend for MockNiriBackend {
     }
 
     async fn execute(&self, action: CompositorAction) -> Result<(), NiriIpcError> {
+        let attempt = {
+            let mut attempts = self
+                .action_attempts
+                .lock()
+                .expect("mock attempt mutex poisoned");
+            *attempts += 1;
+            *attempts
+        };
         self.actions
             .lock()
             .expect("mock action mutex poisoned")
             .push(action);
+
+        if self
+            .fail_on_action
+            .lock()
+            .expect("mock failure mutex poisoned")
+            .is_some_and(|target| target == attempt)
+        {
+            return Err(NiriIpcError::Remote(format!(
+                "mock failure on action {attempt}"
+            )));
+        }
         Ok(())
     }
 

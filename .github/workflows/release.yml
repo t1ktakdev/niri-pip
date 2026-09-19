@@ -41,8 +41,8 @@ jobs:
           mkdir -p dist/bin-stage/niri-pip-linux-x86_64/bin
           BUNDLE=dist/bin-stage/niri-pip-linux-x86_64
 
-          cp target/release/niripip target/release/niripipd "$BUNDLE/bin/"
-          cp install.sh uninstall.sh README.md README.ru.md LICENSE CHANGELOG.md VERIFICATION.md "$BUNDLE/"
+          cp target/release/niripip target/release/niripipd target/release/niripip-ui "$BUNDLE/bin/"
+          cp install.sh uninstall.sh README.md README.ru.md LICENSE CHANGELOG.md RELEASE_NOTES.md VERIFICATION.md "$BUNDLE/"
           cp -r config systemd integrations docs packaging "$BUNDLE/"
           mkdir -p "$BUNDLE/scripts"
           cp scripts/setup-niri-integration.sh scripts/remove-niri-integration.sh "$BUNDLE/scripts/"

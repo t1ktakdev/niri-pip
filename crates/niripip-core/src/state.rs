@@ -7,7 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-pub const STATE_SCHEMA_VERSION: u32 = 2;
+pub const STATE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -15,6 +15,9 @@ pub struct PersistentState {
     pub schema_version: u32,
     pub profiles: HashMap<String, RememberedGeometry>,
     pub controls: HashMap<String, RememberedControls>,
+    pub minimized: Vec<MinimizedWindowState>,
+    /// Identifies the live Niri compositor session that owns minimized window IDs.
+    pub niri_session: Option<String>,
     /// `Some(100)` forces PiP fully opaque. `None` inherits normal Niri/iNiR rules.
     pub pip_opacity_percent: Option<u8>,
 }
@@ -25,6 +28,8 @@ impl Default for PersistentState {
             schema_version: STATE_SCHEMA_VERSION,
             profiles: HashMap::new(),
             controls: HashMap::new(),
+            minimized: Vec::new(),
+            niri_session: None,
             pip_opacity_percent: Some(100),
         }
     }
@@ -47,6 +52,17 @@ impl Default for RememberedGeometry {
             y_percent: 70.0,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MinimizedWindowState {
+    pub window_id: u64,
+    pub title: String,
+    pub app_id: String,
+    pub origin_workspace_id: Option<u64>,
+    pub was_floating: bool,
+    pub size: Option<(u32, u32)>,
+    pub geometry: Option<RememberedGeometry>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,7 +104,7 @@ pub enum StateError {
     },
     #[error("cannot serialize runtime state: {0}")]
     Serialize(#[from] serde_json::Error),
-    #[error("unsupported state schema version {found}; this build supports versions 1 and 2")]
+    #[error("unsupported state schema version {found}; this build supports versions 1, 2 and 3")]
     UnsupportedSchema { found: u32 },
 }
 
@@ -110,13 +126,16 @@ impl PersistentState {
 
         match state.schema_version {
             1 => {
-                // v0.1 stored only geometry. Preserve every learned size/position and add the
-                // controller defaults instead of throwing the user's real PiP geometry away.
                 state.schema_version = STATE_SCHEMA_VERSION;
                 state.controls = HashMap::new();
+                state.minimized = Vec::new();
                 if state.pip_opacity_percent.is_none() {
                     state.pip_opacity_percent = Some(100);
                 }
+            }
+            2 => {
+                state.schema_version = STATE_SCHEMA_VERSION;
+                state.minimized = Vec::new();
             }
             STATE_SCHEMA_VERSION => {}
             found => return Err(StateError::UnsupportedSchema { found }),
@@ -189,11 +208,11 @@ mod tests {
     #[test]
     fn rejects_unknown_state_schema() {
         let path = temp_state_path("unsupported-schema");
-        fs::write(&path, r#"{"schema_version":3,"profiles":{},"controls":{}}"#)
+        fs::write(&path, r#"{"schema_version":4,"profiles":{},"controls":{}}"#)
             .expect("write test state");
 
-        let err = PersistentState::load(&path).expect_err("schema version 3 must be rejected");
-        assert!(matches!(err, StateError::UnsupportedSchema { found: 3 }));
+        let err = PersistentState::load(&path).expect_err("schema version 4 must be rejected");
+        assert!(matches!(err, StateError::UnsupportedSchema { found: 4 }));
 
         let _ = fs::remove_file(path);
     }
@@ -214,6 +233,29 @@ mod tests {
             "manual PiP size must survive migration"
         );
         assert_eq!(state.pip_opacity_percent, Some(100));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn migrates_v2_controls_and_opacity_without_losing_them() {
+        let path = temp_state_path("v2-migration");
+        fs::write(
+            &path,
+            r#"{
+              "schema_version":2,
+              "profiles":{"chromium-empty-app-id":{"width":800,"height":450,"x_percent":55.0,"y_percent":40.0}},
+              "controls":{"chromium-empty-app-id":{"placement":"top-right","follow_enabled":false,"follow_mode":"stay-on-output","geometry_locked":true}},
+              "pip_opacity_percent":87
+            }"#,
+        )
+        .expect("write v2 state");
+
+        let state = PersistentState::load(&path).expect("v2 should migrate");
+        assert_eq!(state.schema_version, STATE_SCHEMA_VERSION);
+        assert_eq!(state.profiles["chromium-empty-app-id"].width, 800);
+        assert!(!state.controls["chromium-empty-app-id"].follow_enabled);
+        assert_eq!(state.pip_opacity_percent, Some(87));
+        assert!(state.minimized.is_empty());
         let _ = fs::remove_file(path);
     }
 

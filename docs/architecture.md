@@ -64,17 +64,15 @@ Logical output geometry retrieved through the `Outputs` request. Output state is
 ```text
 TrackedWindow {
     window_id
-    mode: AutoPip | ManualPin
+    mode: AutoPip | ManualPin | ManualOverlay
     detector: Option<String>
     score: Option<i32>
     follow_mode
-    current_workspace
-    desired_workspace
-    original_was_floating
+    origin: Option<OriginState>
     geometry
     placement
     pending_action
-    last_external_geometry
+    peek_restore: Option<PeekRestore>
 }
 ```
 
@@ -174,18 +172,19 @@ For an auto-detected PiP:
 
 Effects are idempotent enough to be retried after a transient IPC reconnect, but the engine avoids repeatedly issuing them for every metadata event.
 
-### Generic pin
+### Manual pin and overlay
 
-`niripip pin` defaults to the currently focused window in cached compositor state. `--window-id` selects explicitly.
+`niripip pin` defaults to the currently focused window in cached compositor state. `--window-id` selects explicitly. Manual pin snapshots the source workspace and floating/tiling mode, moves to floating if necessary, preserves the current size, and begins workspace following.
 
-Manual pin:
+`niripip overlay` uses the same origin snapshot but also applies a compact size, position and follow policy from `[overlay]` or a named `[profiles.NAME]`. Reapplying an overlay profile does not replace the original snapshot.
 
-- records whether the window was already floating;
-- moves it to floating if necessary;
-- does not resize it to a PiP preset;
-- begins workspace following.
+`unpin` stops management and restores the source workspace, floating/tiling mode and captured size. For a window that was originally floating, the normalized position is restored when available. Niri does not currently expose an ID-addressable action for restoring an exact tiled column index, so the daemon deliberately avoids focus-juggling for that part.
 
-Unpin stops following. By default, a manual pin that niri-pip itself moved from tiling to floating is restored to tiling; a window that was already floating remains floating. This can be disabled in config.
+### Temporary peek
+
+Peek stores the tracked window's current geometry and managed size in memory, applies `[peek]`, and never persists the temporary geometry. Layout events produced while peeking are excluded from learned geometry. On exit, the captured base geometry and managed size are restored.
+
+Base geometry mutations are rejected while peek is active. Workspace-follow events remain valid and re-place the peek geometry on the target workspace without focusing the window.
 
 ## Workspace follow algorithm
 
@@ -276,13 +275,17 @@ Transport is one JSON request and one JSON response per Unix socket connection. 
 
 Commands:
 
-- status
-- list
-- pin
-- unpin
-- toggle
-- reload-config
-- set-enabled
+- status / list / list-minimized
+- minimize / restore-minimized / restore-all-minimized
+- pin / overlay / unpin / toggle
+- peek on/off/toggle
+- resize / scale / position / nudge
+- follow / follow-mode
+- geometry lock/unlock/reset
+- opacity / preset
+- reload-config / set-enabled
+
+Protocol version 4 adds scratchpad minimize/restore commands, minimized-window snapshots and minimized count reporting. It retains the v3 overlay/profile, peek and origin-state controls.
 
 No TCP listener and no shell-command execution exists.
 
@@ -299,13 +302,17 @@ or `~/.local/state/niri-pip/state.json`.
 Persisted:
 
 - learned PiP size;
-- normalized remembered position per detector/profile.
+- normalized remembered position per detector/profile;
+- per-detector controller overrides;
+- PiP opacity policy;
+- minimized-window stack: live window ID, title/app-id and origin restore metadata;
+- Niri session key derived from the Linux boot ID and `NIRI_SOCKET`.
 
-The configured placement remains configuration; live window IDs and transient placement state are not persisted.
+The minimized stack intentionally keeps live IDs so it can survive a daemon restart inside the same Niri session. Before engine startup, a changed session key clears the minimized stack, preventing ID reuse across a Niri restart or reboot from targeting an unrelated window. Within the same session, the authoritative `WindowsChanged` bootstrap also prunes entries whose IDs no longer exist.
 
 Not persisted:
 
-- live window IDs;
+- ordinary tracked PiP/pin/overlay live IDs;
 - pending actions;
 - focused workspace;
 - Niri socket path.
@@ -322,7 +329,7 @@ Event-stream failure enters degraded mode and reconnects with capped exponential
 
 A successful reachability/version probe resets the backoff before the next stream attempt.
 
-Command failures do not kill the daemon. Failed effects are logged and invariants are re-evaluated when the next compositor event arrives.
+Command failures do not kill the daemon. Ordinary reconciliation failures are logged and invariants are re-evaluated on later compositor events. Minimize/restore uses a stricter prepare → IPC actions → commit transaction: persistent minimized state changes only after all planned actions succeed, and partial failures trigger best-effort compositor compensation.
 
 Niri session services are tied to the graphical/Niri lifecycle so a full compositor service restart normally restarts the daemon with a fresh `NIRI_SOCKET` environment.
 
@@ -332,7 +339,8 @@ Niri session services are tied to the graphical/Niri lifecycle so a full composi
 - **late title/app-id:** untracked windows re-score on every `WindowOpenedOrChanged`.
 - **workspace switch during open:** the current focused workspace is evaluated after classification; follow effect targets the latest state.
 - **duplicate events:** tracked classification and pending target checks make processing idempotent.
-- **user disables floating:** tracked PiP re-establishes floating; manually pinned windows do the same while pinned.
+- **user disables floating:** tracked PiP, manual overlay and peeking windows re-establish floating; manual pins remain floating while pinned.
+- **unpin during peek:** manual modes restore their origin snapshot; auto PiP restores its pre-peek geometry before tracking is dropped.
 - **browser crash:** closed IDs are removed; full bootstrap reconciliation also removes stale IDs.
 - **daemon restart:** no window IDs restored from disk; bootstrap re-detects existing PiP windows from current metadata.
 - **IPC disconnect:** mark the backend disconnected but preserve tracked/manual intent while the same PID-scoped Niri socket owner is alive; reconnect with capped exponential backoff and let the authoritative `WindowsChanged` bootstrap prune windows that disappeared during the gap. If the socket disappears or its Niri PID exits, the daemon exits so systemd can restart it with a freshly imported `NIRI_SOCKET`.
@@ -347,12 +355,12 @@ Tests: `MockNiriBackend`, an in-memory event receiver/action recorder.
 
 Most logic tests call the pure core engine directly. Adapter tests validate exact Niri JSON shapes separately.
 
-## v0.2 controller layer
+## v0.3 control and settings layer
 
-v0.2 keeps the v0.1 compositor adapter/state-machine boundary and adds controller mutations inside
-`Engine` rather than shelling out to `niri msg`.
+v0.3 keeps the compositor adapter/state-machine boundary and routes both controller mutations and the
+local Settings UI through the daemon instead of shelling out to `niri msg` for managed behavior.
 
-Controller requests travel over daemon protocol v2 and resolve a target in this order:
+Controller and settings requests travel over daemon protocol v4 and resolve a target in this order:
 
 1. explicit `--window-id`;
 2. focused tracked window;
@@ -370,7 +378,7 @@ events outside the daemon self-action suppression window update this profile. Ex
 position commands update the desired profile immediately so partial width/height events cannot lose
 an explicit user request.
 
-State schema 2 adds per-detector controller metadata while migrating schema-1 geometry in place.
+State schema 3 adds the persistent minimized-window stack. Schema 1 geometry and schema 2 controller/opacity state migrate in place without losing existing learned settings.
 
 ### Geometry lock
 

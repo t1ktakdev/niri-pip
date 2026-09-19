@@ -7,7 +7,14 @@ For each Niri user, run inside the Niri session:
   systemctl --user enable --now niripip.service
   niripip doctor
 
-Open the controller with:
+Open settings with:
+  niripip ui
+
+Scratchpad minimize:
+  Mod+M          -> niripip minimize
+  Mod+Shift+M    -> niripip restore-minimized
+
+Compact power-user controller:
   niripip menu
 
 MSG

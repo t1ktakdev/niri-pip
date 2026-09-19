@@ -6,9 +6,9 @@
 
 **English** · [Русский](README.ru.md)
 
-Sticky Picture-in-Picture and floating-window control for the Niri Wayland compositor.
+Smart Picture-in-Picture, sticky windows and compact overlays for the Niri Wayland compositor.
 
-`niri-pip` watches Niri's event stream, detects browser PiP windows, keeps them floating, follows the active workspace without stealing focus, remembers free-form geometry, and exposes a small controller for size, position, opacity, follow mode, locking and media keys.
+`niri-pip` watches Niri's event stream, detects browser PiP windows, keeps them floating, follows the active workspace without stealing focus, remembers free-form geometry, provides a scratchpad-style minimize/restore flow for normal windows, and exposes a small controller for size, position, opacity, follow mode, locking and media keys.
 
 ## Highlights
 
@@ -21,15 +21,20 @@ Sticky Picture-in-Picture and floating-window control for the Niri Wayland compo
 - Five positions plus pixel nudging.
 - PiP-only opacity override without changing global iNiR window opacity rules.
 - Generic `pin`, `unpin` and `toggle` for normal windows.
+- Universal `overlay` mode for turning any window into a compact sticky overlay.
+- Temporary `peek` mode that enlarges a tracked window and restores its exact base geometry.
+- Origin-aware restore: manual windows return to their original workspace and floating/tiling mode; original floating geometry is restored when available.
+- Named overlay profiles for repeatable call, study, monitoring and other layouts.
+- Scratchpad-style `minimize` / `restore-minimized` / `restore-all` for ordinary windows, with workspace/layout restoration and persistent minimized state across daemon restarts.
 - Optional MPRIS controls through `playerctl`.
 - Compact controller using fuzzel, with rofi/gum fallbacks.
-- English/Russian controller UI with a remembered language choice.
+- Human-sized Settings UI with Automatic/Russian/English language selection and autosave.
 - systemd user service that starts with the graphical Niri session and restarts automatically.
 - Safe iNiR integration through a separate runtime KDL file and marker-scoped include.
 
 ## Verified environment
 
-The v0.2.1 core passed the full build and live-controller acceptance flow on Arch Linux with Niri 26.04 and Rust 1.97.1. The tested flow includes empty-app-id Chromium PiP detection, free-form geometry across daemon restart, workspace follow on/off, opacity changes, geometry lock/unlock, nudge, generic pin/unpin, daemon socket recovery and `niripip doctor` with zero problems.
+v0.3.0 passed the full release preflight on Arch Linux with Niri 26.04 and Rust 1.97.1, including clippy with warnings denied, the complete test suite, release build, installer/doctor validation and live Settings UI browser acceptance. The final real-machine smoke had no auto-PiP window open, so that one destructive live branch was intentionally skipped; the exact matrix is documented below.
 
 See [VERIFICATION.md](VERIFICATION.md) for the exact verification matrix.
 
@@ -92,23 +97,43 @@ journalctl --user -u niripip.service -f
 
 The service uses `Restart=always` while the Niri graphical session is active. It is stopped with the session and can be stopped normally with `systemctl --user stop`.
 
-## Controller
+## Settings UI
 
-Open it from your application launcher as **niri-pip Controller**, or run:
+Open **niri-pip Settings** from your application launcher, or run:
 
 ```sh
-niripip menu
+niripip ui
 ```
 
-The menu follows your locale automatically. Use **Language / Язык** inside the menu to force English or Russian; the choice is stored in `~/.config/niri-pip/ui-language`.
+The settings app is intentionally small: it configures niri-pip behavior instead of acting as a window-control dashboard. Resize and move the real PiP window normally in Niri; when **Remember size and position** is enabled, niri-pip learns those manual changes automatically.
+
+The UI provides:
+
+- Automatic / Russian / English language selection;
+- automatic PiP detection;
+- systemd user-session autostart;
+- remembered PiP geometry;
+- workspace following and follow mode;
+- original-state restore after unpin;
+- focus-stealing prevention and aspect-ratio policy;
+- default PiP opacity;
+- scratchpad minimize enable/focus policy, minimized-window count and restore actions;
+- daemon, Niri IPC, iNiR and desktop-entry diagnostics;
+- safe copyable Niri keybind suggestions.
+
+Preferences autosave. The language choice is stored in `~/.config/niri-pip/ui-language`, while behavioral settings remain normal `config.toml` fields. The UI writes only the fields it owns and preserves unrelated manual configuration.
 
 Suggested Niri shortcut:
 
 ```kdl
 binds {
-    Mod+Alt+P { spawn "niripip" "menu"; }
+    Mod+M { spawn "niripip" "minimize"; }
+    Mod+Shift+M { spawn "niripip" "restore-minimized"; }
+    Mod+Alt+P { spawn "niripip" "ui"; }
 }
 ```
+
+The compact fuzzel/rofi/gum power-user controller is still available with `niripip menu`.
 
 If iNiR already owns your `binds` layout, merge only the binding itself instead of creating a second conflicting block.
 
@@ -118,6 +143,12 @@ If iNiR already owns your `binds` layout, merge only the binding itself instead 
 niripip status
 niripip list
 niripip doctor
+
+niripip minimize
+niripip restore-minimized
+niripip restore-minimized --window-id 123
+niripip restore-all
+niripip minimized
 
 niripip size 1131 636
 niripip scale 10
@@ -157,11 +188,55 @@ niripip preset movie
 niripip preset study
 
 niripip pin
+niripip overlay
+niripip overlay --profile study
+
+niripip peek
+niripip peek on
+niripip peek off
+
 niripip unpin
 niripip toggle
 ```
 
 Manual PiP resize remains authoritative. Presets are shortcuts, not restrictions.
+
+### Minimize / scratchpad
+
+`niripip minimize` moves the focused ordinary window to a dynamically named scratchpad workspace without following focus. `niripip restore-minimized` restores the most recently minimized window; `--window-id` selects a specific one and `restore-all` returns the whole stack. The daemon persists minimized-window metadata, so the stack survives a daemon restart inside the same Niri session. The stack is session-scoped and stale live IDs are discarded after a Niri restart or reboot.
+
+This is intentionally separate from application-native Wayland minimize. Niri 26.04 does not implement a traditional minimize/taskbar model and affected clients can freeze visually after sending the native minimize request. `niri-pip` cannot intercept that request before Niri; the scratchpad commands provide a predictable compositor-side alternative instead.
+
+For floating windows, Niri's own per-workspace floating layout memory is used because it restores position and size exactly. For tiled windows, niri-pip reapplies the captured dimensions because Niri can lose tiled height during a workspace round-trip. The scratchpad name is removed again when the last managed minimized window is restored or closed.
+
+### Sticky windows, overlays and peek
+
+`pin` keeps the selected window sticky without changing its size. `overlay` also applies the
+configured compact size and position:
+
+```sh
+niripip pin
+niripip overlay
+niripip overlay --profile study
+```
+
+For manually managed windows, niri-pip snapshots the origin before it starts moving the window.
+`unpin` returns it to the original workspace and floating/tiling mode. Original size is restored when available; if the window was already floating, its normalized position is restored as well. Niri does not currently offer an ID-addressable action for restoring an exact tiled column index, so niri-pip deliberately does not focus-juggle or pretend that part can be restored reliably.
+
+`peek` is temporary:
+
+```sh
+niripip peek
+niripip peek on
+niripip peek off
+```
+
+It enlarges and repositions the selected tracked window, then returns to the captured base geometry.
+Peek geometry is never learned as normal PiP geometry. Size/position/lock/preset mutations are
+rejected while peek is active so temporary state cannot accidentally become permanent.
+
+Named profiles are ordinary `[profiles.NAME]` entries in `config.toml`. They reuse the same
+small overlay model: width, height, position and follow policy.
 
 ### Media
 
@@ -277,6 +352,7 @@ The uninstaller removes only niri-pip's marker-scoped Niri integration and keeps
 - Niri IPC does not expose a standalone calculated working-area rectangle, so corner positioning uses Niri work-area-relative moves plus configurable safety margins.
 - Niri IPC does not expose a reliable XWayland/native flag for every window.
 - `follow-focused-output` and `stay-on-output` are available, but complex multi-monitor layouts deserve testing on the target setup.
+- Application-native minimize is a Niri/client interaction and cannot be intercepted by niri-pip; use the scratchpad minimize commands/keybinds for predictable behavior on affected Niri versions.
 - MPRIS support depends on the browser/site/player, not only on niri-pip.
 
 ## Development

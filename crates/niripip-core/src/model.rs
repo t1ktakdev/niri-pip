@@ -161,4 +161,16 @@ pub enum CompositorAction {
         workspace_id: u64,
         focus: bool,
     },
+    MoveWindowToWorkspaceName {
+        window_id: u64,
+        workspace_name: String,
+        focus: bool,
+    },
+    SetWorkspaceName {
+        workspace_id: u64,
+        name: String,
+    },
+    UnsetWorkspaceName {
+        name: String,
+    },
 }
