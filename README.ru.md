@@ -128,7 +128,7 @@ niripip ui
 ```kdl
 binds {
     Mod+Alt+M repeat=false { spawn "niripip" "hide"; }
-    Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }
+    Mod+Alt+U repeat=false { spawn "niripip" "restore-hidden"; }
     Mod+Alt+P { spawn "niripip" "ui"; }
 }
 ```

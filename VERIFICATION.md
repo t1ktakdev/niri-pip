@@ -53,7 +53,7 @@ The real installed `niripip-ui --no-open` server was exercised while a disposabl
 Verified:
 
 - Settings reported `Mod+Alt+M` / `niripip hide` as installed with no conflict;
-- Settings reported `Mod+Alt+Shift+M` / `niripip restore-hidden` as installed with no conflict;
+- Settings reported `Mod+Alt+U` / `niripip restore-hidden` as installed with no conflict;
 - the hidden window appeared in the Settings bootstrap list;
 - the per-window restore endpoint returned that specific window and reduced the hidden list to zero.
 

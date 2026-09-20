@@ -116,7 +116,7 @@ ok "settings UI packaging"
 
 grep -q '^\[minimize\]$' config/config.example.toml     || fail "example config is missing [minimize]"
 grep -q 'Mod+Alt+M repeat=false { spawn "niripip" "hide"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing Mod+Alt+M hide"
-grep -q 'Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing restore-hidden"
+grep -q 'Mod+Alt+U repeat=false { spawn "niripip" "restore-hidden"; }' integrations/inir/niri-keybinds.kdl     || fail "recommended keybinds are missing restore-hidden"
 grep -q 'niri-pip hide shortcuts' scripts/setup-niri-integration.sh     || fail "integration installer is missing guarded Hide shortcut markers"
 grep -q 'pub const DAEMON_PROTOCOL_VERSION: u32 = 4;' crates/niripip-core/src/protocol.rs     || fail "daemon protocol is not v4"
 grep -q 'pub const STATE_SCHEMA_VERSION: u32 = 3;' crates/niripip-core/src/state.rs     || fail "persistent state schema is not v3"
@@ -126,6 +126,11 @@ ok "hide/protocol/state integration"
 tmp_hide="$(mktemp -d)"
 mkdir -p "$tmp_hide/config/niri/config.d" "$tmp_hide/home"
 cat > "$tmp_hide/config/niri/config.kdl" <<'EOF'
+input {
+    keyboard {
+        xkb { options "grp:alt_shift_toggle"; }
+    }
+}
 include "config.d/70-binds.kdl"
 include "config.d/90-user-extra.kdl"
 EOF
@@ -137,6 +142,11 @@ EOF
 cat > "$tmp_hide/config/niri/config.d/90-user-extra.kdl" <<'EOF'
 binds {
     Super+M { maximize-window-to-edges; }
+    // >>> niri-pip hide shortcuts >>>
+    // v0.3.1 generated bindings; v0.3.2 must migrate this block.
+    Mod+Alt+M repeat=false { spawn "niripip" "hide"; }
+    Mod+Alt+Shift+M repeat=false { spawn "niripip" "restore-hidden"; }
+    // <<< niri-pip hide shortcuts <<<
 }
 EOF
 
@@ -144,7 +154,8 @@ env -u NIRI_SOCKET XDG_CONFIG_HOME="$tmp_hide/config" HOME="$tmp_hide/home"     
 hide_target="$tmp_hide/config/niri/config.d/90-user-extra.kdl"
 [[ "$(grep -c '^binds {' "$hide_target")" -eq 1 ]]     || fail "Hide integration created a duplicate binds block"
 [[ "$(grep -c 'Mod+Alt+M repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration did not add Mod+Alt+M exactly once"
-[[ "$(grep -c 'Mod+Alt+Shift+M repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration did not add restore shortcut exactly once"
+[[ "$(grep -c 'Mod+Alt+U repeat=false' "$hide_target")" -eq 1 ]]     || fail "Hide integration did not add restore shortcut exactly once"
+! grep -q 'Mod+Alt+Shift+M repeat=false' "$hide_target"     || fail "Hide integration retained the legacy Alt+Shift restore shortcut"
 grep -q 'Super+M { maximize-window-to-edges; }' "$hide_target"     || fail "Hide integration damaged an existing user binding"
 
 env -u NIRI_SOCKET XDG_CONFIG_HOME="$tmp_hide/config" HOME="$tmp_hide/home"     ./scripts/setup-niri-integration.sh >/dev/null 2>&1

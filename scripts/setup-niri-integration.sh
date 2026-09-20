@@ -123,7 +123,7 @@ def bind_status(bind: str, accepted_commands):
 
 bindings = [
     ("Mod+Alt+M", "hide", ("hide", "minimize")),
-    ("Mod+Alt+Shift+M", "restore-hidden", ("restore-hidden", "restore-minimized")),
+    ("Mod+Alt+U", "restore-hidden", ("restore-hidden", "restore-minimized")),
 ]
 new_bindings = []
 for bind, command, accepted in bindings:

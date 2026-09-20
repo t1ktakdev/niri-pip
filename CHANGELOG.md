@@ -4,12 +4,19 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-20
+
+### Fixed
+
+- Changed the Hidden-window restore shortcut to `Mod+Alt+U`. The previous `Mod+Alt+Shift+M` recommendation can interact badly with XKB `grp:alt_shift_toggle` and fall through to iNiR's `Mod+Shift+M` audio-mute binding.
+- Updated the Niri integration installer, Settings shortcut diagnostics, packaged integration snippets and regression checks so fresh installs and upgrades converge on the conflict-free restore binding.
+
 ## [0.3.1] - 2026-09-20
 
 ### Fixed
 
 - Reframed scratchpad parking as **Hide / Hidden windows** instead of presenting it as native Wayland minimize.
-- Recommended shortcuts no longer collide with common Niri maximize/mute bindings: `Mod+Alt+M` hides and `Mod+Alt+Shift+M` restores.
+- Moved the initial Hide shortcuts to `Mod+Alt+M` and `Mod+Alt+Shift+M`; the restore chord was corrected in v0.3.2 for configurations using Alt+Shift layout switching.
 - The Niri integration installer now checks active config includes before adding Hide shortcuts and never overwrites an occupied binding.
 - Hidden scratchpad focus is guarded: if the service workspace is focused, niri-pip immediately returns to the previous normal workspace.
 - Settings now detects installed/free/conflicting shortcut bindings from the active Niri config.

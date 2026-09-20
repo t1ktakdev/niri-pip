@@ -880,12 +880,12 @@ fn recommended_shortcuts() -> Vec<Shortcut> {
         make(
             "restore-hidden",
             "niripip restore-hidden",
-            "Mod+Alt+Shift+M",
+            "Mod+Alt+U",
             &["restore-hidden", "restore-minimized"],
         ),
         make("toggle", "niripip toggle", "Mod+Alt+T", &["toggle"]),
         make("peek", "niripip peek", "Mod+Alt+Space", &["peek"]),
-        make("restore", "niripip unpin", "Mod+Alt+U", &["unpin"]),
+        make("restore", "niripip unpin", "Mod+Alt+BackSpace", &["unpin"]),
     ]
 }
 
@@ -1091,8 +1091,7 @@ mod tests {
     fn shortcut_detection_normalizes_modifiers_and_detects_conflicts() {
         let lines = vec![
             "Super+Alt+M { maximize-window-to-edges; }".to_string(),
-            "Mod+Shift+Alt+M repeat=false { spawn \"/usr/bin/niripip\" \"restore-hidden\"; }"
-                .to_string(),
+            "Mod+Alt+U repeat=false { spawn \"/usr/bin/niripip\" \"restore-hidden\"; }".to_string(),
         ];
 
         assert_eq!(
@@ -1101,7 +1100,7 @@ mod tests {
         );
         assert_eq!(
             shortcut_status(
-                "Mod+Alt+Shift+M",
+                "Mod+Alt+U",
                 &["restore-hidden", "restore-minimized"],
                 &lines
             ),
